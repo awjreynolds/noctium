@@ -1,0 +1,14 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+enum Leaf { First, Second }
+
+export ledger history: HistoricMerkleTree<2, Leaf>;
+
+export circuit appendLeaf(leaf: Leaf): [] {
+  history.insert(disclose(leaf));
+}
+
+export circuit checkRoot(digest: MerkleTreeDigest): Boolean {
+  return history.checkRoot(disclose(digest));
+}

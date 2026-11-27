@@ -30,8 +30,27 @@ structure NominalFieldType where
   name : String
   deriving Repr, BEq, DecidableEq
 
+/-- Source-only identity and declaration order for fieldless enum tags. -/
+structure NominalEnumType where
+  declaration : Types.EnumDecl
+  deriving Repr, BEq, DecidableEq
+
+def NominalEnumType.name (type : NominalEnumType) : String := type.declaration.id
+
+def NominalEnumType.maximum (type : NominalEnumType) : Nat :=
+  type.declaration.variants.length - 1
+
+def NominalEnumType.valueType (type : NominalEnumType) : Ty := .uint type.maximum
+
 initialize noctiumNominalFieldTypeRegistry : SimplePersistentEnvExtension
     (String × NominalFieldType) (Array (String × NominalFieldType)) ←
+  registerSimplePersistentEnvExtension {
+    addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
+    addEntryFn := Array.push
+  }
+
+initialize noctiumNominalEnumTypeRegistry : SimplePersistentEnvExtension
+    (String × Noctium.NominalEnumType) (Array (String × Noctium.NominalEnumType)) ←
   registerSimplePersistentEnvExtension {
     addImportedFn := fun entries => entries.foldl (init := #[]) (· ++ ·)
     addEntryFn := Array.push
@@ -71,6 +90,9 @@ structure CircuitInfo where
   /-- Source-only nominal UInt identities for circuit inputs and outputs. -/
   nominalUIntInputs : List (String × NominalUIntType) := []
   nominalUIntOutputs : List (String × NominalUIntType) := []
+  /-- Source-only nominal enum identities for circuit inputs and outputs. -/
+  nominalEnumInputs : List (String × NominalEnumType) := []
+  nominalEnumOutputs : List (String × NominalEnumType) := []
   /-- Source-only nominal Field identities on ordinary circuit parameters/results. -/
   nominalFieldInputs : List (String × NominalFieldType) := []
   nominalFieldOutputs : List (String × NominalFieldType) := []
@@ -289,6 +311,7 @@ scoped syntax "Secp256r1Point" : nltype
 scoped syntax "Curve25519Base" : nltype
 scoped syntax "Curve25519Scalar" : nltype
 scoped syntax "Curve25519Point" : nltype
+scoped syntax (name := noctiumEnumTypeCommand) "noctium_enum" ident "where" ident* "end" : command
 scoped syntax (name := noctiumUIntTypeCommand) "noctium_uint_type" ident ":="
   "UInt" num : command
 
@@ -738,6 +761,39 @@ def resolveNominalUIntType (name : Name) (site : Syntax) : CommandElabM NominalU
   | some (_, declaration) => pure declaration
   | none => throwErrorAt site s!"unknown nominal UInt type '{name}'"
 
+private def resolveNominalEnumType (name : Name) (site : Syntax) : CommandElabM NominalEnumType := do
+  let registry := noctiumNominalEnumTypeRegistry.getState (← getEnv)
+  let current := ((← getCurrNamespace) ++ name).toString
+  match registry.find? (·.1 == current) <|> registry.find? (·.1 == name.toString) with
+  | some (_, declaration) => pure declaration
+  | none => throwErrorAt site s!"unknown fieldless enum type '{name}'"
+
+@[command_elab noctiumEnumTypeCommand] unsafe def elabNoctiumEnumType : CommandElab := fun stx => do
+  match stx with
+  | `(noctium_enum $name:ident where $members:ident* end) => do
+    let fullName := ((← getCurrNamespace) ++ name.getId).toString
+    unless Types.validDeclId fullName do
+      throwErrorAt name s!"invalid fieldless enum identity '{fullName}'"
+    let enumRegistry := noctiumNominalEnumTypeRegistry.getState (← getEnv)
+    let uintRegistry := noctiumNominalUIntTypeRegistry.getState (← getEnv)
+    let fieldRegistry := noctiumNominalFieldTypeRegistry.getState (← getEnv)
+    let importedRegistry := noctiumImportedModuleTypeRegistry.getState (← getEnv)
+    if enumRegistry.any (·.1 == fullName) || uintRegistry.any (·.1 == fullName) ||
+        fieldRegistry.any (·.1 == fullName) || importedRegistry.any (·.1 == fullName) then
+      throwErrorAt name s!"duplicate Noctium source type '{name.getId}'"
+    let variants := members.toList.map fun variant =>
+      ({name := variant.getId.toString} : Types.VariantDecl)
+    unless !variants.isEmpty do
+      throwErrorAt name "a fieldless enum must declare at least one variant"
+    let declaration : Types.EnumDecl := {id := fullName, variants}
+    let environment : Types.CompositeEnv := {enumerations := [declaration]}
+    match environment.validate Types.defaultLimits with
+    | .error diagnostic => throwErrorAt stx diagnostic.message
+    | .ok _ => pure ()
+    modifyEnv fun env => noctiumNominalEnumTypeRegistry.addEntry env
+      (fullName, {declaration})
+  | _ => throwUnsupportedSyntax
+
 @[command_elab noctiumUIntTypeCommand] unsafe def elabNoctiumUIntType : CommandElab := fun stx => do
   match stx with
   | `(noctium_uint_type $name:ident := UInt $bits:num) => do
@@ -797,10 +853,12 @@ private structure CircuitSourceType where
   type : Ty
   nominalUInt : Option NominalUIntType := none
   nominalField : Option NominalFieldType := none
+  nominalEnum : Option NominalEnumType := none
   contractRef : Option Name := none
 
 private def readCircuitSourceType (stx : TSyntax `nltype)
-    (allowNominalField : _root_.Bool := _root_.Bool.false) : CommandElabM CircuitSourceType := do
+    (allowNominalField : _root_.Bool := _root_.Bool.false)
+    (allowNominalEnum : _root_.Bool := _root_.Bool.false) : CommandElabM CircuitSourceType := do
   if let `(nltype| ContractRef $interface:ident) := stx then
     let name ← liftCoreM <| resolveGlobalConstNoOverload interface
     let declaration ← getConstInfo name
@@ -817,6 +875,11 @@ private def readCircuitSourceType (stx : TSyntax `nltype)
       if allowNominalField then
         return {type := .native, nominalField := some declaration}
       throwErrorAt name "nominal Field aliases are only supported in ordinary circuit declarations"
+    if allowNominalEnum then
+      let enumRegistry := noctiumNominalEnumTypeRegistry.getState (← getEnv)
+      if let some (_, declaration) := enumRegistry.find? (·.1 == current) <|>
+          enumRegistry.find? (·.1 == name.getId.toString) then
+        return {type := declaration.valueType, nominalEnum := some declaration}
   if let some name := nominalUIntTypeIdentifier stx then
     let declaration ← resolveNominalUIntType name.getId name
     return {type := .uint declaration.maximum, nominalUInt := some declaration}
@@ -2001,9 +2064,27 @@ private def circuitNominalEnvironment (info : CircuitInfo) : CircuitNominalEnv :
   (info.nominalUIntInputs.map fun (name, nominalUInt) => (name, some nominalUInt)) ++
     (info.nominalUIntOutputs.map fun (name, nominalUInt) => (name, some nominalUInt))
 
+private def circuitNominalEnumEnvironment (info : CircuitInfo) :
+    List (String × Option NominalEnumType) :=
+  (info.nominalEnumInputs.map fun (name, nominalEnum) => (name, some nominalEnum)) ++
+    (info.nominalEnumOutputs.map fun (name, nominalEnum) => (name, some nominalEnum))
+
 private def bindCircuitNominal (env : CircuitNominalEnv) (name : String)
     (nominalUInt : Option NominalUIntType) : CircuitNominalEnv :=
   (name, nominalUInt) :: env.filter (·.1 != name)
+
+private def bindNominalEnum (env : List (String × Option NominalEnumType)) (name : String)
+    (nominalEnum : Option NominalEnumType) : List (String × Option NominalEnumType) :=
+  (name, nominalEnum) :: env.filter (·.1 != name)
+
+private partial def nominalEnumForSourceExpression
+    (env : List (String × Option NominalEnumType)) (stx : TSyntax `nlexpr) :
+    Option NominalEnumType :=
+  match stx with
+  | `(nlexpr| disclose($value:nlexpr))
+  | `(nlexpr| copyValue($value:nlexpr)) => nominalEnumForSourceExpression env value
+  | `(nlexpr| $name:ident) => (env.lookup name.getId.toString).join
+  | _ => none
 
 private partial def hasCircuitNominalReference (env : CircuitNominalEnv) (stx : Syntax) : _root_.Bool :=
   match stx with
@@ -2590,6 +2671,8 @@ private unsafe def checkGeneratedContract (name : Name)
     let mut inputInfo := []
     let mut publicInputInfo := []
     let mut nominalUIntInputInfo := []
+    let mut nominalEnumEnv : List (String × Option NominalEnumType) := []
+    let mut nominalEnumInputInfo := []
     let mut nominalFieldEnv : List (String × Option NominalFieldType) := []
     let mut nominalFieldInputInfo := []
     let mut contractRefEnv : List (String × Name) := []
@@ -2597,6 +2680,7 @@ private unsafe def checkGeneratedContract (name : Name)
     let mut outputs : Array (TSyntax `term) := #[]
     let mut outputInfo : List (String × Ty) := []
     let mut nominalUIntOutputInfo := []
+    let mut nominalEnumOutputInfo := []
     let mut nominalFieldOutputInfo := []
     let mut constraints : Array (TSyntax `term) := #[]
     for stmt in stmts do
@@ -2604,7 +2688,7 @@ private unsafe def checkGeneratedContract (name : Name)
       | `(nlcstmt| public $id:ident : $ty:nltype)
       | `(nlcstmt| private $id:ident : $ty:nltype) =>
         ensureFresh env id
-        let sourceType ← readCircuitSourceType ty _root_.Bool.true
+        let sourceType ← readCircuitSourceType ty _root_.Bool.true _root_.Bool.true
         let t := sourceType.type
         let tt ← tyTerm t
         let isPublic := stmt.raw[0].getAtomVal == "public"
@@ -2613,6 +2697,7 @@ private unsafe def checkGeneratedContract (name : Name)
         inputs := inputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, visibility := $visibility, span := $span : Noctium.Input }))
         env := (id.getId.toString, t, ← `(@Noctium.Expr.ref $tt $(stringTerm id.getId.toString))) :: env
         nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
+        nominalEnumEnv := bindNominalEnum nominalEnumEnv id.getId.toString sourceType.nominalEnum
         nominalFieldEnv := (id.getId.toString, sourceType.nominalField) ::
           nominalFieldEnv.filter (·.1 != id.getId.toString)
         contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
@@ -2621,13 +2706,18 @@ private unsafe def checkGeneratedContract (name : Name)
         inputInfo := inputInfo ++ [(id.getId.toString, t)]
         if let some nominalUInt := sourceType.nominalUInt then
           nominalUIntInputInfo := nominalUIntInputInfo ++ [(id.getId.toString, nominalUInt)]
+        if let some nominalEnum := sourceType.nominalEnum then
+          nominalEnumInputInfo := nominalEnumInputInfo ++ [(id.getId.toString, nominalEnum)]
         if let some nominalField := sourceType.nominalField then
           nominalFieldInputInfo := nominalFieldInputInfo ++ [(id.getId.toString, nominalField)]
         if isPublic then publicInputInfo := publicInputInfo ++ [(id.getId.toString, t)]
       | `(nlcstmt| let $id:ident : $ty:nltype := $value:nlexpr) =>
         ensureFresh env id
-        let sourceType ← readCircuitSourceType ty _root_.Bool.true
+        let sourceType ← readCircuitSourceType ty _root_.Bool.true _root_.Bool.true
         let t := sourceType.type
+        if let some nominalEnum := sourceType.nominalEnum then
+          unless nominalEnumForSourceExpression nominalEnumEnv value == some nominalEnum do
+            throwErrorAt value "fieldless enum values must retain their declared type identity"
         let retain := (match t with | .uint _ => Bool.true | _ => Bool.false) || hasPartialScalar value
         let value ← if sourceType.nominalField.isSome ||
             hasCircuitNominalFieldReference nominalFieldEnv value.raw then
@@ -2645,6 +2735,7 @@ private unsafe def checkGeneratedContract (name : Name)
             constraints := constraints.push (← `(Noctium.Expr.eq $value $value))
         env := (id.getId.toString, t, value) :: env
         nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
+        nominalEnumEnv := bindNominalEnum nominalEnumEnv id.getId.toString sourceType.nominalEnum
         nominalFieldEnv := (id.getId.toString, sourceType.nominalField) ::
           nominalFieldEnv.filter (·.1 != id.getId.toString)
         contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
@@ -2655,9 +2746,12 @@ private unsafe def checkGeneratedContract (name : Name)
       | `(nlcstmt| output $id:ident : $ty:nltype := $value:nlexpr) =>
         if outputInfo.any (fun p => p.1 == id.getId.toString) || inputInfo.any (fun p => p.1 == id.getId.toString) then
           throwErrorAt id "duplicate Noctium output '{id.getId}'"
-        let sourceType ← readCircuitSourceType ty _root_.Bool.true
+        let sourceType ← readCircuitSourceType ty _root_.Bool.true _root_.Bool.true
         let t := sourceType.type
         let tt ← tyTerm t
+        if let some nominalEnum := sourceType.nominalEnum then
+          unless nominalEnumForSourceExpression nominalEnumEnv value == some nominalEnum do
+            throwErrorAt value "fieldless enum values must retain their declared type identity"
         let value ← if sourceType.nominalField.isSome ||
             hasCircuitNominalFieldReference nominalFieldEnv value.raw then
           checkedCircuitFieldExpression env nominalEnv nominalFieldEnv value sourceType
@@ -2667,6 +2761,8 @@ private unsafe def checkGeneratedContract (name : Name)
         outputInfo := outputInfo ++ [(id.getId.toString, t)]
         if let some nominalUInt := sourceType.nominalUInt then
           nominalUIntOutputInfo := nominalUIntOutputInfo ++ [(id.getId.toString, nominalUInt)]
+        if let some nominalEnum := sourceType.nominalEnum then
+          nominalEnumOutputInfo := nominalEnumOutputInfo ++ [(id.getId.toString, nominalEnum)]
         if let some nominalField := sourceType.nominalField then
           nominalFieldOutputInfo := nominalFieldOutputInfo ++ [(id.getId.toString, nominalField)]
         if let some interface := sourceType.contractRef then
@@ -2683,6 +2779,8 @@ private unsafe def checkGeneratedContract (name : Name)
       outputs := outputInfo
       nominalUIntInputs := nominalUIntInputInfo
       nominalUIntOutputs := nominalUIntOutputInfo
+      nominalEnumInputs := nominalEnumInputInfo
+      nominalEnumOutputs := nominalEnumOutputInfo
       nominalFieldInputs := nominalFieldInputInfo
       nominalFieldOutputs := nominalFieldOutputInfo
       contractRefBindings := contractRefInfo
@@ -2720,6 +2818,7 @@ private def addReferenceAs (env : Bindings) (sourceName internalName : String) (
 private inductive MerkleLeafType where
   | scalar (ty : Ty)
   | record (fields : List (String × Ty))
+  | enumeration (type : NominalEnumType)
   deriving BEq
 
 private structure OptionalRecordHead where
@@ -2765,6 +2864,7 @@ private structure EntryEffects where
   env : Bindings
   nominalUIntBindings : CircuitNominalEnv := []
   nominalFieldBindings : List (String × Option NominalFieldType) := []
+  nominalEnumBindings : List (String × Option NominalEnumType) := []
   nominalUIntCells : List (String × NominalUIntType) := []
   nominalFieldCells : List (String × NominalFieldType) := []
   nominalUIntLists : List (String × NominalUIntType) := []
@@ -3039,11 +3139,14 @@ private def merkleLeafHash (values : List (Ty × TSyntax `term)) :
   let bytes ← concatMerkleLeafBytes (domain :: chunks)
   `(Noctium.Expr.sha256 $bytes)
 
-private def merkleLeafValues (env : Bindings) (ty : MerkleLeafType)
+private def merkleLeafValues (state : EntryEffects) (ty : MerkleLeafType)
     (leaf : Option (TSyntax `nlledgervalue)) : CommandElabM (List (Ty × TSyntax `term)) := do
   match leaf with
   | none =>
-    let types := match ty with | .scalar scalar => [scalar] | .record fields => fields.map Prod.snd
+    let types := match ty with
+      | .scalar scalar => [scalar]
+      | .record fields => fields.map Prod.snd
+      | .enumeration enumeration => [enumeration.valueType]
     types.mapM fun field => do
       pure (field, ← `(Noctium.GuardedExpression.zeroValue $(← tyTerm field)))
   | some payload =>
@@ -3051,11 +3154,20 @@ private def merkleLeafValues (env : Bindings) (ty : MerkleLeafType)
     | .scalar scalar => do
       let `(nlledgervalue| $value:nlexpr) := payload
         | throwErrorAt payload "scalar MerkleTree leaf expects one expression"
-      pure [(scalar, ← checkedExpression env value scalar)]
+      pure [(scalar, ← checkedExpression state.env value scalar)]
     | .record fields => do
       let `(nlledgervalue| $values:nlleaves) := payload
         | throwErrorAt payload "record MerkleTree leaf expects fields(...)"
-      checkedLedgerFieldValues env values fields
+      checkedLedgerFieldValues state.env values fields
+    | .enumeration enumeration => do
+      let `(nlledgervalue| $value:nlexpr) := payload
+        | throwErrorAt payload "fieldless enum MerkleTree leaf expects one enum value"
+      let some actual := nominalEnumForSourceExpression state.nominalEnumBindings value
+        | throwErrorAt value "MerkleTree enum leaf type mismatch"
+      unless actual == enumeration do
+        throwErrorAt value "MerkleTree enum leaf type mismatch"
+      pure [(enumeration.valueType,
+        ← checkedExpression state.env value enumeration.valueType)]
 
 private def merkleWriteTerm (storage : TSyntax `ident) (keys hash : TSyntax `term)
     (nested : _root_.Bool) (index : Option (TSyntax `term)) : CommandElabM (TSyntax `term) := do
@@ -3074,7 +3186,7 @@ private def elaborateTypedMerkleWrite (schema : List (String × StateKind)) (pat
     | throwErrorAt path "MerkleTree path is missing its declared leaf type"
   if fieldOnly && ty != .scalar .native then
     throwErrorAt path "insertField requires a Native MerkleTree leaf"
-  let hash ← merkleLeafHash (← merkleLeafValues state.env ty leaf)
+  let hash ← merkleLeafHash (← merkleLeafValues state ty leaf)
   let index ← index.mapM fun index => checkedExpression state.env index (.uint (2 ^ 64 - 1))
   let term ← merkleWriteTerm storage keys hash nested index
   pure {state with terms := state.terms.push term}
@@ -6339,9 +6451,27 @@ private def checkMerkleLeafWidth (source : Syntax) (fields : List Ty) : CommandE
 private def readMerkleSpec (spec : TSyntax `nlmerklespec) : CommandElabM (Nat × MerkleLeafType) := do
   let (depth, leaf) ← match spec with
     | `(nlmerklespec| $depth:num $[of $leaf:nltype]?) => do
-      let ty ← match leaf with | none => pure Ty.native | some source => readTy source
-      checkMerkleLeafWidth spec [ty]
-      pure (depth.getNat, MerkleLeafType.scalar ty)
+      let leafType ← match leaf with
+        | none => pure (MerkleLeafType.scalar Ty.native)
+        | some source => do
+          let enumeration? ← match source with
+            | `(nltype| $enumName:ident) => do
+              let registry := noctiumNominalEnumTypeRegistry.getState (← getEnv)
+              let current := ((← getCurrNamespace) ++ enumName.getId).toString
+              pure ((registry.find? (·.1 == current) <|>
+                registry.find? (·.1 == enumName.getId.toString)).map Prod.snd)
+            | _ => pure none
+          match enumeration? with
+          | some enumeration => do
+            unless enumeration.maximum < 256 do
+              throwErrorAt source "MerkleTree fieldless enum leaves require a one-byte ordinal"
+            checkMerkleLeafWidth spec [enumeration.valueType]
+            pure (.enumeration enumeration)
+          | none => do
+            let ty ← readTy source
+            checkMerkleLeafWidth spec [ty]
+            pure (.scalar ty)
+      pure (depth.getNat, leafType)
     | `(nlmerklespec| $depth:num of struct $name:ident { $fields:nlmerkleafield* }) => do
       let id := name.getId.toString
       let mut layoutFields : Array Types.Field := #[]
@@ -7181,6 +7311,7 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
         let initial : EntryEffects := {
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
+          nominalEnumBindings := circuitNominalEnumEnvironment info
           nominalFieldBindings :=
             (info.nominalFieldInputs.map fun (field, nominalField) => (field, some nominalField)) ++
             (info.nominalFieldOutputs.map fun (field, nominalField) => (field, some nominalField))
@@ -7235,6 +7366,7 @@ private def importedRecordSetSchema? (source : TSyntax `nltype) : CommandElabM
         let initial : EntryEffects := {
           env := env
           nominalUIntBindings := circuitNominalEnvironment info
+          nominalEnumBindings := circuitNominalEnumEnvironment info
           nominalFieldBindings :=
             (info.nominalFieldInputs.map fun (field, nominalField) => (field, some nominalField)) ++
             (info.nominalFieldOutputs.map fun (field, nominalField) => (field, some nominalField))
