@@ -696,6 +696,20 @@ def LedgerValueType.recordFields (environment : Types.CompositeEnv)
       throw "mixed ledger record layout does not match its flat field declaration"
     pure fields
 
+/-- Composite layouts encode fixed bytes as a byte sequence. Root Cell source
+records keep fixed bytes as scalar `Ty` fields, so normalize only the temporary
+schema environment used by the checked layout compiler. Named declarations,
+field order, and each byte width remain intact. -/
+def LedgerValueType.cellRecordSchemaEnvironment
+    (environment : Types.CompositeEnv) : Types.CompositeEnv := Id.run do
+  let normalizeField (field : Types.Field) : Types.Field :=
+    match field.type with
+    | .scalar (.bytes length) => {field with type := .bytes length}
+    | _ => field
+  let structures := environment.structures.map fun declaration =>
+    {declaration with fields := declaration.fields.map normalizeField}
+  return {environment with structures}
+
 /-- Describe a flat typed root Cell record after the generic checked Native
 record path. The List element path uses a narrower byte-width policy, and
 nested Map records keep their existing recordFields rules. -/
@@ -753,7 +767,8 @@ private def nestedCellRecordFieldPaths (environment : Types.CompositeEnv)
       | .structure _ => true
       | _ => false) do
     throw "nested root Cell record path requires a nested structure"
-  let checked ← (Types.checkedLayout Types.defaultLimits environment type).mapError (·.message)
+  let schemaEnvironment := LedgerValueType.cellRecordSchemaEnvironment environment
+  let checked ← (Types.checkedLayout Types.defaultLimits schemaEnvironment type).mapError (·.message)
   let scalarTy (field : Types.Field) : Except String Ty := do
     match field.type with
     | .scalar .native => pure .native
@@ -761,7 +776,11 @@ private def nestedCellRecordFieldPaths (environment : Types.CompositeEnv)
     | .scalar (.uint maximum) => do
       ScalarPolicy.validate (.uint maximum)
       pure (.uint maximum)
-    | _ => throw "nested root Cell fields must be Native, Bool, or UInt"
+    | .scalar (.bytes length) | .bytes length => do
+      unless length ≤ maxByteOperationLength do
+        throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
+      pure (.bytes length)
+    | _ => throw "nested root Cell fields must be Native, Bool, UInt, or fixed Bytes"
   let groups ← declaration.fields.mapM fun field => do
     match field.type with
     | .structure childId => do
@@ -778,7 +797,11 @@ private def nestedCellRecordFieldPaths (environment : Types.CompositeEnv)
   let names := fields.map (fun (_, name, _) => name)
   unless names.eraseDups.length == names.length do
     throw "nested root Cell fields produce duplicate physical names"
-  unless checked.expandedLeaves == fields.length do
+  let expectedLeaves := fields.foldl (fun total (_, _, ty) =>
+    total + match ty with
+      | .bytes length => length
+      | _ => 1) 0
+  unless checked.expandedLeaves == expectedLeaves do
     throw "root Cell leaf count does not match its checked schema"
   pure fields
 

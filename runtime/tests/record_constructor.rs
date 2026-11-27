@@ -105,6 +105,104 @@ fn nested_record_cell_matches_compact() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn fixed_bytes_json(value: &[u8]) -> serde_json::Value {
+    json!({"kind":"bytes", "values":value})
+}
+
+#[test]
+#[ignore = "requires fresh NestedFixedBytesRecordCell artifacts in NOCTIUM_NESTED_FIXED_BYTES_CELL_DIR"]
+fn nested_fixed_bytes_record_cell_matches_compact() -> anyhow::Result<()> {
+    let directory = PathBuf::from(
+        std::env::var_os("NOCTIUM_NESTED_FIXED_BYTES_CELL_DIR")
+            .expect("NOCTIUM_NESTED_FIXED_BYTES_CELL_DIR"),
+    );
+    let artifacts = |entry: &str| -> anyhow::Result<(Plan, IrSource)> {
+        let stem = format!("NestedFixedBytesRecordCell.{entry}");
+        Ok((
+            serde_json::from_reader(File::open(directory.join(format!("{stem}.impact.json")))?)?,
+            IrSource::load(File::open(directory.join(format!("{stem}.zkir")))?)?,
+        ))
+    };
+    let (inspect, inspect_relation) = artifacts("inspect")?;
+    let (write, write_relation) = artifacts("writeRecord")?;
+    let (reset, reset_relation) = artifacts("clearRecord")?;
+    let zero_payload = vec![0u8; 40];
+    let expected = |payload: &[u8], marker: &str, counter: &str| {
+        BTreeMap::from([
+            ("payloadResult".into(), fixed_bytes_json(payload)),
+            ("markerResult".into(), json!(marker)),
+            ("counterResult".into(), json!(counter)),
+        ])
+    };
+    let initial = construct_state(&inspect, &BTreeMap::new())
+        .context("construct the default nested record Cell")?;
+    let params = &ledger::structure::INITIAL_PARAMETERS;
+    let address = ContractAddress::default();
+    let run_inspect = |state: &_| -> anyhow::Result<_> {
+        let execution = prepare(&inspect, &BTreeMap::new(), state, params, address)?;
+        check(&execution, &inspect_relation)?;
+        assert_eq!(&execution.after.state, state);
+        Ok(execution.returns_json())
+    };
+
+    assert_eq!(
+        run_inspect(&initial).context("inspect the zero default")?,
+        expected(&zero_payload, "0", "0")
+    );
+
+    let mut payload = (1..=35).collect::<Vec<u8>>();
+    payload.extend_from_slice(&[0, 0, 0, 0, 0]);
+    assert_eq!(payload.len(), 40);
+    let marker = "81985529216486895";
+    let counter = "18446744073709551615";
+    let write_inputs = |value: &[u8]| {
+        BTreeMap::from([
+            ("payloadArg".into(), fixed_bytes_json(value)),
+            ("markerArg".into(), json!(marker)),
+            ("counterArg".into(), json!(counter)),
+        ])
+    };
+    let invalid_write = prepare(
+        &write,
+        &write_inputs(&payload[..39]),
+        &initial,
+        params,
+        address,
+    );
+    assert!(invalid_write.is_err(), "a 39 byte payload must reject");
+    assert_eq!(run_inspect(&initial)?, expected(&zero_payload, "0", "0"));
+
+    let mut written = prepare(&write, &write_inputs(&payload), &initial, params, address)
+        .context("write the nested Bytes<40> leaf")?;
+    assert_eq!(check(&written, &write_relation)?, written.activity_schedule);
+    assert_eq!(
+        run_inspect(&written.after.state).context("read the exact nested write")?,
+        expected(&payload, marker, counter)
+    );
+    let first_chunk = written
+        .preimage
+        .inputs
+        .first_mut()
+        .context("missing packed write input")?;
+    *first_chunk = *first_chunk + Fr::from(1u64);
+    assert!(check(&written, &write_relation).is_err());
+
+    let cleared = prepare(
+        &reset,
+        &BTreeMap::new(),
+        &written.after.state,
+        params,
+        address,
+    )
+    .context("reset the nested record Cell")?;
+    assert_eq!(check(&cleared, &reset_relation)?, cleared.activity_schedule);
+    assert_eq!(
+        run_inspect(&cleared.after.state).context("inspect the reset default")?,
+        expected(&zero_payload, "0", "0")
+    );
+    Ok(())
+}
+
 #[test]
 #[ignore = "requires fresh SealedRecordCell artifacts in NOCTIUM_SEALED_RECORD_CELL_DIR"]
 fn sealed_record_cell_preserves_seeded_fields_and_rejects_mutation() -> anyhow::Result<()> {

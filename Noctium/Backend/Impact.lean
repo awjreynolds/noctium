@@ -1416,7 +1416,8 @@ def cellRecordSchema (environment : Types.CompositeEnv) (type : Types.CompositeT
           | _ => false
     | _ => false
   if hasNested then do
-    let compiled ← (Types.compileType environment type).mapError Types.LayoutDiagnostic.message
+    let schemaEnvironment := LedgerValueType.cellRecordSchemaEnvironment environment
+    let compiled ← (Types.compileType schemaEnvironment type).mapError Types.LayoutDiagnostic.message
     Types.schemaJson compiled
   else recordSchemaForFields environment type fields
 
