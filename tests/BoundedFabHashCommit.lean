@@ -28,6 +28,36 @@ noctium_circuit boundedFabHashInputs where
     boundedFabHashEnvironment, boundedFabHashPayloadType, transientOpening, [count]))
 end
 
+private def scalarFabCommitEnvironment : CompositeEnv := {}
+private def scalarFabCommitType : CompositeType := .scalar .native
+private def scalarFabCommitPayload : Sigma Expr := ⟨.native, .native 41⟩
+
+#guard (validateFabCommitLayout scalarFabCommitEnvironment (.scalar .bool)
+  [⟨.bool, .bool Bool.true⟩]).isOk == Bool.false
+#guard (validateFabCommitLayout scalarFabCommitEnvironment scalarFabCommitType
+  [scalarFabCommitPayload, scalarFabCommitPayload]).isOk == Bool.false
+#guard (validateFabHashLayout scalarFabCommitEnvironment scalarFabCommitType
+  [scalarFabCommitPayload]).isOk == Bool.false
+
+noctium_circuit scalarFabCommitInputs where
+  private payload : Native
+  private persistentOpening : Bytes32
+  private transientOpening : Native
+  output persistentCommitDigest : Bytes32 := disclose(persistentCommitFab(
+    scalarFabCommitEnvironment, scalarFabCommitType, persistentOpening, [payload]))
+  output transientCommitDigest : Native := disclose(transientCommitFab(
+    scalarFabCommitEnvironment, scalarFabCommitType, transientOpening, [payload]))
+end
+
+/- error: undisclosed private -/
+#guard_msgs (substring := true) in
+noctium_circuit rejectsScalarCommitDisclosure where
+  private payload : Native
+  public opening : Native
+  output digest : Native := transientCommitFab(
+    scalarFabCommitEnvironment, scalarFabCommitType, opening, [payload])
+end
+
 namespace BoundedFabHashCommit
 
 private def payloadWire : Helpers.Wire.Codec := {
@@ -48,6 +78,10 @@ noctium_contract BoundedFabHashCommit where
     return persistentResult : Bytes32 := persistentDigest
     return persistentCommitResult : Bytes32 := persistentCommitDigest
     return transientResult : Native := transientDigest
+    return transientCommitResult : Native := transientCommitDigest
+  end
+  entry scalarCommit uses scalarFabCommitInputs where
+    return persistentCommitResult : Bytes32 := persistentCommitDigest
     return transientCommitResult : Native := transientCommitDigest
   end
   entry readable uses BoundedFabHashCommit.hashPayload where

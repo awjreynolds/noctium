@@ -1386,10 +1386,10 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro environment type opening values ihOpening ihValues caps types ctx left right valid agreement
     cases supported : caps.persistentHash32
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · cases schema : validateFabHashLayout environment type values with
+    · cases schema : validateFabCommitLayout environment type values with
       | error message => simp [Expr.validate, supported, schema, Bind.bind, Except.bind] at valid
       | ok checkedLayout =>
-        cases fields : fabHashLayoutFields checkedLayout with
+        cases fields : fabCommitHashLayoutFields checkedLayout with
         | error message => simp [Expr.validate, supported, schema, fields, Bind.bind, Except.bind] at valid
         | ok layouts =>
           cases openingResult : opening.validate caps types with
@@ -1412,10 +1412,10 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro environment type opening values ihOpening ihValues caps types ctx left right valid agreement
     cases supported : caps.poseidon2
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · cases schema : validateFabHashLayout environment type values with
+    · cases schema : validateFabCommitLayout environment type values with
       | error message => simp [Expr.validate, supported, schema, Bind.bind, Except.bind] at valid
       | ok checkedLayout =>
-        cases fields : fabHashLayoutFields checkedLayout with
+        cases fields : fabCommitHashLayoutFields checkedLayout with
         | error message => simp [Expr.validate, supported, schema, fields, Bind.bind, Except.bind] at valid
         | ok layouts =>
           cases openingResult : opening.validate caps types with

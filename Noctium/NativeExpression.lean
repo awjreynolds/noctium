@@ -167,7 +167,7 @@ private def nativeExpressionJson : Expr ty → Json
         | .ok value => (Types.schemaJson value).toOption.getD Json.null
         | .error _ => Json.null
       let encodedValues := match compiled with
-        | .ok value => match fabHashLayoutFields value.checked.value with
+        | .ok value => match fabCommitHashLayoutFields value.checked.value with
           | .ok fields => Json.arr
               (nativeExpressionFabValuesJson (fields.map Prod.snd) values)
           | .error _ => Json.arr #[]
@@ -182,7 +182,7 @@ private def nativeExpressionJson : Expr ty → Json
         | .ok value => (Types.schemaJson value).toOption.getD Json.null
         | .error _ => Json.null
       let encodedValues := match compiled with
-        | .ok value => match fabHashLayoutFields value.checked.value with
+        | .ok value => match fabCommitHashLayoutFields value.checked.value with
           | .ok fields => Json.arr
               (nativeExpressionFabValuesJson (fields.map Prod.snd) values)
           | .error _ => Json.arr #[]

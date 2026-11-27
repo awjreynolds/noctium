@@ -39,6 +39,45 @@ fn direct_inputs(
     ])
 }
 
+#[test]
+#[ignore = "requires fresh compiler outputs in NOCTIUM_BOUNDED_FAB_HASH_COMMIT_DIR"]
+fn scalar_fab_commitments_match_compact() -> anyhow::Result<()> {
+    let directory = artifacts();
+    let plan: Plan = serde_json::from_slice(&fs::read(
+        directory.join("BoundedFabHashCommit.scalarCommit.impact.json"),
+    )?)?;
+    let circuit = IrSource::load(fs::File::open(
+        directory.join("BoundedFabHashCommit.scalarCommit.zkir"),
+    )?)?;
+    let initial = create_state(&plan, &BTreeMap::new())?;
+    let parameters = &ledger::structure::INITIAL_PARAMETERS;
+    let address = ContractAddress::default();
+    let mut inputs = BTreeMap::from([
+        ("payload".into(), json!("41")),
+        ("persistentOpening".into(), bytes(&[9; 32])),
+        ("transientOpening".into(), json!("19")),
+    ]);
+    let execution = prepare(&plan, &inputs, &initial, parameters, address)?;
+    check(&execution, &circuit)?;
+    assert_eq!(
+        execution.returns_json(),
+        BTreeMap::from([
+            ("persistentCommitResult".into(), bytes(&hex::decode(
+                "1095b00773ff16a5567335c81b6c23b6302e8b2a29a30ee3b1d8924b589e290e"
+            )?)),
+            ("transientCommitResult".into(), json!(
+                "18190385127810226412538976525783302391822206762158481351937660354805643878470"
+            )),
+        ])
+    );
+    inputs.insert("persistentOpening".into(), bytes(&[9; 31]));
+    assert!(prepare(&plan, &inputs, &initial, parameters, address).is_err());
+    inputs.insert("persistentOpening".into(), bytes(&[9; 32]));
+    inputs.insert("payload".into(), json!("-1"));
+    assert!(prepare(&plan, &inputs, &initial, parameters, address).is_err());
+    Ok(())
+}
+
 fn readable_payload(count: u8) -> Json {
     json!({
         "kind":"struct",

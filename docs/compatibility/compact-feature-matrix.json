@@ -5637,7 +5637,7 @@
       "layer": "standard-library",
       "surface": "transientCommit",
       "noctiumStatus": "subset",
-      "notes": "Lean transientCommitFab prepends a Native opening to the canonical FAB value fields. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open. A bounded UIntRange 7 record matches pinned Compact commitment outputs at counts 5 and 6 under two opening pairs, and rejects count 7.",
+      "notes": "Lean transientCommitFab prepends a Native opening to the canonical FAB value fields. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open. A bounded UIntRange 7 record matches pinned Compact commitment outputs at counts 5 and 6 under two opening pairs, and rejects count 7. A single Native scalar payload matches Compact Field for payload 41 and Native opening 19. The compiler rejects implicit disclosure of a private payload.",
       "source": [
         "stdlib",
         "stdlibSource",
@@ -5711,7 +5711,7 @@
       "layer": "standard-library",
       "surface": "persistentCommit",
       "noctiumStatus": "subset",
-      "notes": "Lean persistentCommitFab prepends a Bytes32 opening to the canonical FAB bytes. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open. A bounded UIntRange 7 record matches pinned Compact commitment outputs at counts 5 and 6 under two opening pairs, and rejects count 7.",
+      "notes": "Lean persistentCommitFab prepends a Bytes32 opening to the canonical FAB bytes. The 3.2.1 checker matches Compact 0.36.1 for a checked flat record under independent changes to payload and opening, and for one nested Jubjub and Secp256k1 payload. Flat positional tuples match the same native preimage and output when their leaf types and order match. General overload qualification remains open. A bounded UIntRange 7 record matches pinned Compact commitment outputs at counts 5 and 6 under two opening pairs, and rejects count 7. A single Native scalar payload matches Compact Field for payload 41 and a Bytes32 opening filled with 9. A 31-byte opening rejects.",
       "source": [
         "stdlib",
         "stdlibSource",

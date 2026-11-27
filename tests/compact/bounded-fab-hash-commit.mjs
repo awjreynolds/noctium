@@ -46,7 +46,7 @@ try {
 
   const runtime = await import(pathToFileURL(join(runtimeDirectory, 'dist/index.js')).href);
   assert.equal(runtime.versionString, '0.21.0');
-  const { Contract } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
+  const { Contract, pureCircuits } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
   const contract = new Contract({});
   const walletKey = '00'.repeat(32);
   const { currentContractState } = await contract.initialState(
@@ -97,6 +97,13 @@ try {
     transientCommit: '3614288230654847062934431037799109620006385912217859110602866898799661824041',
   });
   await assert.rejects(hashRange(7n, openingForward, firstOpeningNonce));
+  const scalarOpening = new Uint8Array(32).fill(9);
+  const [persistent, transient] = pureCircuits.scalarCommit(41n, scalarOpening, 19n);
+  assert.equal(Buffer.from(persistent).toString('hex'),
+    '1095b00773ff16a5567335c81b6c23b6302e8b2a29a30ee3b1d8924b589e290e');
+  assert.equal(transient, 18190385127810226412538976525783302391822206762158481351937660354805643878470n);
+  assert.throws(() => pureCircuits.scalarCommit(41n, scalarOpening.slice(1), 19n));
+  assert.throws(() => pureCircuits.scalarCommit(-1n, scalarOpening, 19n));
 
   console.log(JSON.stringify({
     compiler: compilerVersion,
@@ -108,6 +115,7 @@ try {
     openingNonces: [firstOpeningNonce.toString(), secondOpeningNonce.toString()],
     outputs: { countFive, countSix, countFiveSecondOpening },
     rejectedCount: 7,
+    scalarCommit: { persistent: Buffer.from(persistent).toString('hex'), transient: transient.toString() },
   }, null, 2));
 } finally {
   rmSync(scratch, { recursive: true, force: true });

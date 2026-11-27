@@ -929,6 +929,18 @@ fn aligned_fab_payload(
     aligned_fab_values(&fields, values, env)
 }
 
+fn aligned_fab_commit_payload(
+    schema_json: &Json,
+    values: &[FabHashInput],
+    env: &Environment,
+    operand_limit: usize,
+) -> Result<AlignedValue> {
+    let schema_bytes = serde_json::to_vec(schema_json)?;
+    let schema = Schema::from_json(&schema_bytes)?;
+    let fields = schema.fab_commit_fields(operand_limit)?;
+    aligned_fab_values(&fields, values, env)
+}
+
 fn hash_to_curve_fab(
     schema_json: &Json,
     values: &[FabHashInput],
@@ -966,7 +978,12 @@ fn persistent_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = claim_hash_output(evaluate(opening, env)?, "FAB persistent commitment opening")?;
-    let payload = aligned_fab_payload(schema_json, values, env, aggregates::MAX_FAB_OPERANDS - 2)?;
+    let payload = aligned_fab_commit_payload(
+        schema_json,
+        values,
+        env,
+        aggregates::MAX_FAB_OPERANDS - 2,
+    )?;
     let commitment = base_crypto::hash::persistent_commit(&ValueReprAlignedValue(payload), opening);
     Ok(Value::Bytes(commitment.0.to_vec()))
 }
@@ -978,7 +995,12 @@ fn transient_commit_fab(
     env: &Environment,
 ) -> Result<Value> {
     let opening = evaluate(opening, env)?.field()?;
-    let payload = aligned_fab_payload(schema_json, values, env, MAX_TRANSIENT_HASH_FIELDS - 1)?;
+    let payload = aligned_fab_commit_payload(
+        schema_json,
+        values,
+        env,
+        MAX_TRANSIENT_HASH_FIELDS - 1,
+    )?;
     Ok(Value::Native(transient_crypto::hash::transient_commit(
         &ValueReprAlignedValue(payload),
         opening,

@@ -3039,12 +3039,12 @@ private def lowerBytes : Expr (.bytes length) → LowerM ByteOperands
       let result ← lowerPersistentHash ("fab:" ++ type.fingerprint environment) alignment operands
       pure {values := result, packed := true}
   | .persistentCommitFab environment type opening values => do
-    match validateFabHashLayout environment type values with
+    match validateFabCommitLayout environment type values with
     | .error message =>
       rejectLowering message
       pure {values := []}
     | .ok compiled => do
-      let fields ← match fabHashLayoutFields compiled with
+      let fields ← match fabCommitHashLayoutFields compiled with
         | .ok fields => pure fields
         | .error message =>
           rejectLowering message
@@ -3306,12 +3306,12 @@ def lowerExpr : Expr ty → LowerM String
       modify fun state => {state with expressions := (key, output) :: state.expressions}
       pure output
   | .transientCommitFab environment type opening values => do
-    match validateFabHashLayout environment type values with
+    match validateFabCommitLayout environment type values with
     | .error message =>
       rejectLowering message
       pure "0x00"
     | .ok compiled => do
-      let fields ← match fabHashLayoutFields compiled with
+      let fields ← match fabCommitHashLayoutFields compiled with
         | .ok fields => pure fields
         | .error message =>
           rejectLowering message

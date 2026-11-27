@@ -17,3 +17,14 @@ export pure circuit hashRange(
     transientCommit<Payload>(payload, transientOpening),
   ];
 }
+
+export pure circuit scalarCommit(
+  payload: Field,
+  persistentOpening: Bytes<32>,
+  transientOpening: Field,
+): [Bytes<32>, Field] {
+  return [
+    persistentCommit<Field>(payload, persistentOpening),
+    transientCommit<Field>(payload, transientOpening),
+  ];
+}
