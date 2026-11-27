@@ -26,7 +26,7 @@ try {
 
   const { Contract } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
   const wallet = '00'.repeat(32);
-  for (const [circuitId, count] of [['shortRange', 3], ['longRange', 1025]]) {
+  for (const [circuitId, count] of [['shortRange', 3], ['longRange', 1025], ['aliasRange', 1200]]) {
     const calls = [];
     const contract = new Contract({
       visit: ({ privateState }, index) => {

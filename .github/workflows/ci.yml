@@ -492,6 +492,9 @@ jobs:
           .lake/build/bin/noctium compile tests/ReadableUnitBindings.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/readable-unit-bindings"
+          .lake/build/bin/noctium compile tests/FlatWitnessRange.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --emit witness --output "$artifacts/flat-witness-range"
           .lake/build/bin/noctium compile tests/NamedProofUnit.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/named-proof-unit"
@@ -587,6 +590,10 @@ jobs:
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/fixed-numeric-bytes"
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          NOCTIUM_FLAT_WITNESS_RANGE_DIR="$artifacts/flat-witness-range" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test flat_witness_range \
+              flat_witness_range_replays_every_provider_in_order_and_stops_on_failure -- --exact --ignored
           cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
             --no-default-features --features zkir-321 --test readable_bind_patterns -- --ignored
           NOCTIUM_GUARDED_PARTIALS_DIR="$artifacts/guarded-partials" \
