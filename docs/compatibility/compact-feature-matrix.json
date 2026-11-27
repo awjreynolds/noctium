@@ -4292,7 +4292,7 @@
       "layer": "language-ledger",
       "surface": "HistoricMerkleTree.insert",
       "noctiumStatus": "subset",
-      "notes": "Typed scalars and flat named records lower through the mdn:lh leaf digest. Pinned Field, Bool and mixed record cases compare the root, cursor and retained history.",
+      "notes": "Typed scalars and flat named records lower through the mdn:lh leaf digest. Pinned Field, Bool and mixed record cases compare the root, cursor and retained history. A root historic tree also accepts the declared fieldless enum. Compact 0.36.1 and the native checker agree on both ordinal insertions, the full retained root history, and false membership for an unrelated root. An invalid ordinal rejects.",
       "source": [
         "adt"
       ],
@@ -4312,7 +4312,10 @@
         "tests/RecordMerkleLeaves.lean",
         "tests/compact/RecordMerkleLeaves.compact",
         "tests/compact/record-merkle-leaves.mjs",
-        "runtime/tests/record_merkle_leaves.rs"
+        "runtime/tests/record_merkle_leaves.rs",
+        "tests/EnumHistoricMerkleLeaf.lean",
+        "tests/compact/EnumHistoricMerkleLeaf.compact",
+        "tests/compact/enum-historic-merkle-leaf.mjs"
       ],
       "equivalence": "unverified"
     },

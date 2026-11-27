@@ -417,6 +417,9 @@ jobs:
           .lake/build/bin/noctium compile tests/TypedMerklePathRoot.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/typed-merkle-path-root"
+          .lake/build/bin/noctium compile tests/EnumHistoricMerkleLeaf.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/enum-historic-merkle"
           .lake/build/bin/noctium compile tests/CompositeMaybeInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-maybe-input"
@@ -601,6 +604,10 @@ jobs:
               --no-default-features --features zkir-321 --test effect_blocks \
               --test collection_reads --test native_map_list --test merkle_reads --test counter_snapshot_ffi \
               --test constructor_actions
+          NOCTIUM_ENUM_HISTORIC_MERKLE_DIR="$artifacts/enum-historic-merkle" \
+            cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+              --no-default-features --features zkir-321 --test record_merkle_leaves \
+              enum_historic_merkle_leaves_match_compact -- --exact --ignored
           NOCTIUM_READABLE_LINKED_HELPERS_DIR="$artifacts/readable-linked-helpers" \
             cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
               --no-default-features --features zkir-321 --test pure_helpers -- \

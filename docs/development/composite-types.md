@@ -115,6 +115,15 @@ These use the declared FAB byte layout and the ledger leaf hash. The explicit
 `insertHash` and `insertHashIndex` forms accept a precomputed digest.
 [Source example](../../tests/TypedMerkleLeaves.lean)
 
+Declare a fieldless enum with `noctium_enum`, then use its name as the leaf
+type in `historicMerkleTree history : 2 of LeafMarker`. An `insertLeaf` accepts
+the declared enum and uses its ordinal as one byte in the leaf preimage.
+Private tags still require disclosure at the write. The paired case appends
+two enum variants, matches Compact's roots and cursor, and verifies the
+retained history. A different enum rejects at source and an out-of-range
+ordinal rejects during native execution.
+[Lean source](../../tests/EnumHistoricMerkleLeaf.lean) · [Compact replay](../../tests/compact/enum-historic-merkle-leaf.mjs) · [Native replay](../../runtime/tests/record_merkle_leaves.rs)
+
 A Merkle leaf can use a named record with nested records of supported fields.
 
 ```lean

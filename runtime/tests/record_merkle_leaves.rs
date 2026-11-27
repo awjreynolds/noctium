@@ -17,6 +17,73 @@ use std::{
 
 type Fixture = (Plan, IrSource);
 
+#[test]
+#[ignore = "requires fresh EnumHistoricMerkleLeaf outputs in NOCTIUM_ENUM_HISTORIC_MERKLE_DIR"]
+fn enum_historic_merkle_leaves_match_compact() -> anyhow::Result<()> {
+    let fixture = |entry| {
+        fixture_from_env(
+            "NOCTIUM_ENUM_HISTORIC_MERKLE_DIR",
+            "EnumHistoricMerkleLeaf",
+            entry,
+        )
+    };
+    let (append_plan, append_circuit) = fixture("appendLeaf");
+    let (check_plan, check_circuit) = fixture("verifyRoot");
+    let address = ContractAddress::default();
+    let mut state = create_state(
+        &append_plan,
+        &BTreeMap::from([("history".into(), json!([]))]),
+    )?;
+    let first = "52338727732638548006345953549845904366783121056964119166615544019424479756183";
+    let second = "15831237040453927935864996955634063830107168333773309502281365794546414537437";
+    assert_tree(&append_plan, &state, "history", "0", 0, Some(&["0"]));
+    let args = |ordinal: &str| BTreeMap::from([("marker".into(), json!(ordinal))]);
+    let cases: [(u64, &str, &str, &[&str]); 2] = [
+        (1, "0", first, &["0", first]),
+        (2, "1", second, &["0", first, second]),
+    ];
+    for (cursor, ordinal, root, history) in cases {
+        let execution = prepare(
+            &append_plan,
+            &args(ordinal),
+            &state,
+            &INITIAL_PARAMETERS,
+            address,
+        )?;
+        check(&execution, &append_circuit)?;
+        state = execution.after.state;
+        assert_tree(&append_plan, &state, "history", root, cursor, Some(history));
+    }
+    for (root, known) in [
+        ("0", true),
+        (first, true),
+        (second, true),
+        ("123456789", false),
+    ] {
+        let execution = prepare(
+            &check_plan,
+            &BTreeMap::from([("expectedRoot".into(), json!(root))]),
+            &state,
+            &INITIAL_PARAMETERS,
+            address,
+        )?;
+        check(&execution, &check_circuit)?;
+        assert_eq!(execution.returns_json()["knownRoot"], json!(known));
+        assert_eq!(execution.after.state, state);
+    }
+    assert!(
+        prepare(
+            &append_plan,
+            &args("2"),
+            &state,
+            &INITIAL_PARAMETERS,
+            address,
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
 const APPEND_ROOT: &str =
     "41498041122156615907734201443800972360403159218673782910906735168768629395736";
 const SPARSE_ROOT: &str =
