@@ -165,6 +165,12 @@ Circuit loops expand statically. Each cloned witness call receives a distinct si
 
 A flat body with a single `Unit` witness call taking the Native loop index uses the weighted source budget and lowers the callbacks in order. The typed host opts in to a request budget of 1,026 for the 1,025-call fixture, including the reserved CAS request. [Lean fixture](../../tests/FlatWitnessRange.lean) · [Native replay](../../runtime/tests/flat_witness_range.rs) · [Compact reference runner](../../tests/compact/flat-witness-range.mjs)
 
+A direct Native alias of the index before the call uses the same lowering.
+Compact and the native session both observe indices 0 through 1,199. The
+fixture opts in to a 1,201-request budget, including the reserved CAS request.
+A calculated alias uses the general range budget. The native session stops
+when the request budget is exhausted or a provider fails.
+
 Compact 0.36.1 with Runtime 0.21.0 and Noctium's Ledger 9.1.0.1 and ZKIR 3.2.1 host path both ran the same 1,025 callback indices in order and returned zero. The native test checks the emitted relation, rejects a typed budget of 1,027 and stops after an injected failure at index 3. One local emission produced a 600,979-byte witness control file, a 182-byte relation and a 985-byte Impact plan. Source paths appear in the control file. [Reproduction and scope](https://github.com/awjreynolds/noctium/issues/1468)
 
 The three-iteration fixture initially occupied 1,954,016 bytes for its Impact plan and 42,783 bytes for ZKIR. Selecting constant branches once and excluding expired iteration bindings reduces these to 226,696 and 13,710 bytes respectively. This measures artifact size, without a new timing, K or proof benchmark.

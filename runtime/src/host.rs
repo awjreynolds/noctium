@@ -19,7 +19,7 @@ pub const CAS: &str = "private_state.compare_exchange.v1";
 pub const CAS_SCHEMA: &str = "PrivateStateCasResult/v1";
 pub const MAX_PRIVATE_BYTES: usize = 65_536;
 const MAX_LEGACY_REQUESTS: usize = 257;
-const MAX_TYPED_REQUESTS: usize = 1_026;
+const MAX_TYPED_REQUESTS: usize = 1_201;
 const MAX_RECOVERY_BYTES: usize = 1_200_000;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
