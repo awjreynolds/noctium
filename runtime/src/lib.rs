@@ -3625,20 +3625,30 @@ fn record_type_name(ty: &ScalarType) -> Result<Cow<'static, str>> {
     })
 }
 
-fn nested_native_bool_aggregate_fields(json: &Json) -> Result<Vec<RecordField>> {
+fn nested_list_aggregate_fields(json: &Json) -> Result<Vec<RecordField>> {
     fn scalar_type(layout: &Json) -> Result<ScalarType> {
         ensure!(
             layout.get("kind").and_then(Json::as_str) == Some("scalar"),
-            "nested List record fields must be Native or Bool scalars"
+            "nested List record fields must be Native, Bool, or bounded UInt scalars"
         );
-        match layout
+        let leaf = layout
             .get("leaf")
-            .and_then(|leaf| leaf.get("kind"))
-            .and_then(Json::as_str)
-        {
+            .ok_or_else(|| anyhow!("nested List record scalar is missing its leaf"))?;
+        match leaf.get("kind").and_then(Json::as_str) {
             Some("native") => Ok(ScalarType::Native),
             Some("bool") => Ok(ScalarType::Bool),
-            _ => bail!("nested List record fields must be Native or Bool scalars"),
+            Some("uint") => {
+                let maximum = leaf
+                    .get("maximum")
+                    .and_then(Json::as_str)
+                    .ok_or_else(|| anyhow!("nested List UInt leaf is missing its maximum"))?;
+                let maximum = BigUint::parse_bytes(maximum.as_bytes(), 10)
+                    .ok_or_else(|| anyhow!("nested List UInt leaf has an invalid maximum"))?;
+                ScalarType::parse(&format!("UIntRange<{}>", maximum + 1u8))
+            }
+            _ => bail!(
+                "nested List record fields must be Native, Bool, or bounded UInt scalars"
+            ),
         }
     }
 
@@ -3685,13 +3695,13 @@ fn nested_native_bool_aggregate_fields(json: &Json) -> Result<Vec<RecordField>> 
                     });
                 }
             }
-            _ => bail!("nested List records support one level of Native/Bool fields"),
+            _ => bail!("nested List records support one level of Native/Bool/UInt fields"),
         }
     }
 
     ensure!(
         has_nested_record && !result.is_empty(),
-        "List record extension requires one nested record with Native/Bool fields"
+        "List record extension requires one nested record with Native/Bool/UInt fields"
     );
     Ok(result)
 }
@@ -3761,9 +3771,9 @@ fn checked_record_schema_fields(json: &Json, scope: RecordScope) -> Result<Check
         } else {
             ensure!(
                 matches!(&scope, RecordScope::List),
-                "record requires Native leaves or a nested Native/Bool List record"
+                "record requires Native leaves or a nested Native/Bool/UInt List record"
             );
-            let fields = nested_native_bool_aggregate_fields(json)?;
+            let fields = nested_list_aggregate_fields(json)?;
             let leaf_types = schema.leaf_types()?;
             ensure!(
                 fields.len() == leaf_types.len(),
@@ -3869,6 +3879,7 @@ fn validate_record_values(schema: &CheckedRecordSchema, values: &[Value]) -> Res
             .iter()
             .map(|value| match value {
                 Value::Bool(value) => Ok(Json::Bool(*value)),
+                Value::UInt { number, .. } => Ok(Json::String(number.to_str_radix(10))),
                 _ => Ok(Json::String(field_decimal(value.field()?))),
             })
             .collect::<Result<Vec<_>>>()?;
