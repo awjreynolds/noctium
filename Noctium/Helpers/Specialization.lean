@@ -108,6 +108,7 @@ inductive Statement where
   | stage (capability key : String) (type : GenericType) (value : Term)
   | emitEvent (kind : EventKind) (payload : Term)
   | claimShielded (kind : ShieldedClaimKind) (digest : Term)
+  | claimContractCall (address entryPointHash commitment : Term)
   deriving Repr, Inhabited
 
 structure Declaration where
@@ -625,6 +626,9 @@ private def sourceChildren (limits : Limits) (span : SourceSpan) :
     | .stage _ _ type value => pure [.typeExpr type, .term value]
     | .emitEvent _ payload => pure [.term payload]
     | .claimShielded _ digest => pure [.term digest]
+    | .claimContractCall address entryPointHash commitment =>
+      boundedChildren span limits.maxSourceNodes
+        [.term address, .term entryPointHash, .term commitment]
 
 private def scanNodes (limits : Limits) (span : SourceSpan) (available : Nat)
     (initial : List SourceNode) : Except Diagnostic Nat := go available 0 (initial.map (·, 1))
@@ -874,6 +878,11 @@ mutual
       | .claimShielded kind digest => do
         let digest ← convertTerm limits declaration types naturals values digest
         result := result.push (.claimShielded kind digest)
+      | .claimContractCall address entryPointHash commitment => do
+        let address ← convertTerm limits declaration types naturals values address
+        let entryPointHash ← convertTerm limits declaration types naturals values entryPointHash
+        let commitment ← convertTerm limits declaration types naturals values commitment
+        result := result.push (.claimContractCall address entryPointHash commitment)
     pure result.toList
 
   private partial def convertTerm (limits : Limits) (declaration : Declaration)
@@ -1251,6 +1260,10 @@ private partial def collectWitnessStatements (providers : List Helpers.WitnessSi
         collectWitnessTerms providers value (collectWitnessTerms providers key result)
       | .emitEvent _ payload => collectWitnessTerms providers payload result
       | .claimShielded _ digest => collectWitnessTerms providers digest result
+      | .claimContractCall address entryPointHash commitment =>
+        collectWitnessTerms providers commitment
+          (collectWitnessTerms providers entryPointHash
+            (collectWitnessTerms providers address result))
     collectWitnessStatements providers rest result
 
 private def witnessStatements (providers : List Helpers.WitnessSignature)

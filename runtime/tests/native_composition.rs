@@ -243,6 +243,149 @@ fn ledger_caller_guard_accepts_only_the_parent_in_the_call_forest() {
 }
 
 #[test]
+#[ignore = "requires fresh ContractCaller Ledger 9.1.0.1 / ZKIR 3.2.1 artifacts in NOCTIUM_HELPER_CALL_CLAIMS_DIR"]
+fn helper_contract_call_claim_matches_only_its_checked_target_selector_and_return() {
+    use coin_structure::coin::PublicAddress;
+    use noctium_runtime::prepare_with_context;
+
+    let directory = PathBuf::from(
+        env::var_os("NOCTIUM_HELPER_CALL_CLAIMS_DIR")
+            .expect("fresh ContractCaller outputs in NOCTIUM_HELPER_CALL_CLAIMS_DIR"),
+    );
+    let load = |stem: &str| {
+        let plan = serde_json::from_slice::<Plan>(
+            &fs::read(directory.join(format!("{stem}.impact.json"))).unwrap(),
+        )
+        .unwrap();
+        let circuit = IrSource::load(
+            fs::File::open(directory.join(format!("{stem}.zkir"))).unwrap(),
+        )
+        .unwrap();
+        (plan, circuit)
+    };
+    let (child_plan, child_circuit) = load("ProtectedCallee.move");
+    let (parent_plan, parent_circuit) = load("HelperForwardingCaller.forward");
+
+    let parent = ContractAddress(HashOutput([31; 32]));
+    let child = ContractAddress(HashOutput([32; 32]));
+    let child_state = create_state(
+        &child_plan,
+        &BTreeMap::from([
+            ("permitted".into(), bytes32(parent.0)),
+            ("enforce".into(), json!(true)),
+            ("balance".into(), json!("10")),
+        ]),
+    )
+    .unwrap();
+    let mut child_context = QueryContext::new(child_state.clone(), child);
+    child_context.call_context.caller = Some(PublicAddress::Contract(parent));
+    let child_execution = prepare_with_context(
+        &child_plan,
+        &BTreeMap::from([("amount".into(), json!("3"))]),
+        child_context.clone(),
+        &INITIAL_PARAMETERS,
+    )
+    .unwrap();
+    check(&child_execution, &child_circuit).unwrap();
+    assert_eq!(
+        child_execution.after.state,
+        create_state(
+            &child_plan,
+            &BTreeMap::from([
+                ("permitted".into(), bytes32(parent.0)),
+                ("enforce".into(), json!(true)),
+                ("balance".into(), json!("13")),
+            ]),
+        )
+        .unwrap()
+    );
+    let child_entry = EntryPointBuf::from(b"move".to_vec());
+    let entry_hash = child_entry.ep_hash();
+
+    let parent_state = create_state(
+        &parent_plan,
+        &BTreeMap::from([("marker".into(), json!("0"))]),
+    )
+    .unwrap();
+    let parent_inputs =
+        |target: ContractAddress, selector: HashOutput, enabled: bool, expected: &str| {
+            BTreeMap::from([
+                ("target".into(), bytes32(target.0)),
+                ("entryHash".into(), bytes32(selector)),
+                ("enabled".into(), json!(enabled)),
+                ("opening".into(), json!("101")),
+                ("amount".into(), json!("3")),
+                ("expected".into(), json!(expected)),
+            ])
+        };
+    let prepare_parent =
+        |target: ContractAddress, selector: HashOutput, enabled: bool, expected: &str| {
+            prepare(
+                &parent_plan,
+                &parent_inputs(target, selector, enabled, expected),
+                &parent_state,
+                &INITIAL_PARAMETERS,
+                parent,
+            )
+            .unwrap()
+        };
+    let child_call = || CheckedNativeCall {
+        execution: &child_execution,
+        circuit: &child_circuit,
+        initial_context: child_context.clone(),
+        entry_point: child_entry.clone(),
+        communication_commitment_rand: Fr::from(101u64),
+    };
+    let assemble = |execution: &noctium_runtime::Execution| {
+        let parent_call = checked_call(
+            execution,
+            &parent_circuit,
+            parent_state.clone(),
+            parent,
+            EntryPointBuf::from(b"forward".to_vec()),
+            Fr::from(53u64),
+        );
+        assemble_checked_calls(
+            &[parent_call, child_call()],
+            &INITIAL_PARAMETERS,
+            1_800_000_000,
+            &mut OsRng,
+        )
+    };
+
+    let matched = prepare_parent(child, entry_hash, true, "13");
+    check(&matched, &parent_circuit).unwrap();
+    assert_eq!(matched.after.effects.claimed_contract_calls.iter().count(), 1);
+    let intent = assemble(&matched).unwrap();
+    let calls: Vec<_> = intent.calls().collect();
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].calls(calls[1]));
+
+    let wrong_expected = prepare_parent(child, entry_hash, true, "14");
+    check(&wrong_expected, &parent_circuit).unwrap();
+    assert!(assemble(&wrong_expected).is_err());
+
+    let wrong_selector = prepare_parent(
+        child,
+        EntryPointBuf::from(b"withdraw".to_vec()).ep_hash(),
+        true,
+        "13",
+    );
+    check(&wrong_selector, &parent_circuit).unwrap();
+    assert!(assemble(&wrong_selector).is_err());
+
+    let wrong_target =
+        prepare_parent(ContractAddress(HashOutput([33; 32])), entry_hash, true, "13");
+    check(&wrong_target, &parent_circuit).unwrap();
+    assert!(assemble(&wrong_target).is_err());
+
+    let inactive = prepare_parent(child, entry_hash, false, "13");
+    check(&inactive, &parent_circuit).unwrap();
+    assert!(inactive.after.effects.claimed_contract_calls.is_empty());
+    assert!(assemble(&inactive).is_err());
+}
+
+#[test]
 fn native_intent_assembles_a_call_forest_and_rejects_unmatched_claims() {
     let (caller_plan, caller_circuit) = caller_fixture();
     let (callee_plan, callee_circuit) = callee_fixture();

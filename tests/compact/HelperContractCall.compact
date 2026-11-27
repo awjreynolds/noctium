@@ -1,0 +1,21 @@
+pragma language_version 0.28;
+import CompactStandardLibrary;
+
+contract NativeForwardingCallee {
+  circuit move(amount: Field): Field;
+}
+
+circuit route(target: NativeForwardingCallee, amount: Field): Field {
+  return target.move(amount);
+}
+
+export circuit forward(
+  target: NativeForwardingCallee,
+  enabled: Boolean,
+  amount: Field,
+): Field {
+  if (disclose(enabled)) {
+    return route(disclose(target), disclose(amount));
+  }
+  return 0 as Field;
+}

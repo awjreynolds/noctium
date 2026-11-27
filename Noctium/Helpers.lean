@@ -374,6 +374,9 @@ inductive Statement where
   | readMember (state destination : String) (keyTy valueTy : Ty) (key : Term)
   | writeMap (state : String) (keyTy valueTy : Ty) (key value : Term)
   | emitEvent (kind : EventKind) (payload : Term)
+  /-- Claim a native contract call using its raw address, entry point hash and
+  transient commitment. -/
+  | claimContractCall (address entryPointHash commitment : Term)
   /-- Claim a raw shielded receive, spend, or nullifier digest in a native helper. -/
   | claimShielded (kind : ShieldedClaimKind) (digest : Term)
   deriving Repr
@@ -720,6 +723,8 @@ private def statementTerms : Statement → List Term
   | .readMap _ _ _ _ key | .readMember _ _ _ _ key => [key]
   | .writeMap _ _ _ key value => [key, value]
   | .emitEvent _ payload => [payload]
+  | .claimContractCall address entryPointHash commitment =>
+    [address, entryPointHash, commitment]
   | .claimShielded _ digest => [digest]
   | .branch condition _ _ => [condition]
   | .return value => value.toList
@@ -1271,6 +1276,9 @@ private partial def freshenStatementWitnessSites (statement : Statement) : Expan
     return .writeMap state keyType valueType (← freshenTermWitnessSites key)
       (← freshenTermWitnessSites value)
   | .emitEvent kind payload => return .emitEvent kind (← freshenTermWitnessSites payload)
+  | .claimContractCall address entryPointHash commitment =>
+    return .claimContractCall (← freshenTermWitnessSites address)
+      (← freshenTermWitnessSites entryPointHash) (← freshenTermWitnessSites commitment)
   | .claimShielded kind digest => return .claimShielded kind (← freshenTermWitnessSites digest)
 
 private partial def freshenStatementsWitnessSites (body : List Statement) : ExpansionM (List Statement) :=
@@ -2113,6 +2121,21 @@ private def checkBody (limits : Limits) (program : Program) (declaration : Decla
           unless partialSubtype info.ty (.scalar (.bytes kind.payloadSize)) do
             fail span "helper ledger event payload type mismatch"
           pure {info with ty := some .unit, effects := (.event :: info.effects).eraseDups}
+        | .claimContractCall address entryPointHash commitment => do
+          let address ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span address (some nominals)
+          unless partialSubtype address.ty (.scalar (.bytes 32)) ||
+              address.ty == some (.composite (.bytes 32)) do
+            fail span "helper contract call claim address must be Bytes32"
+          let entryPointHash ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span
+            entryPointHash (some nominals)
+          unless partialSubtype entryPointHash.ty (.scalar (.bytes 32)) ||
+              entryPointHash.ty == some (.composite (.bytes 32)) do
+            fail span "helper contract call claim entry point hash must be Bytes32"
+          let commitment ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span
+            commitment (some nominals)
+          unless partialSubtype commitment.ty (.scalar .native) do
+            fail span "helper contract call claim commitment must be Native"
+          pure (combine (some .unit) [address, entryPointHash, commitment] [.crossCall])
         | .claimShielded _ digest => do
           let info ← inferPartialTerm limits.maxSourceDepth program declaration.id.scope env span digest (some nominals)
           unless partialSubtype info.ty (.scalar (.bytes 32)) ||
@@ -2832,6 +2855,9 @@ private def closeLedgerEffect (types : TypeEnv) (bindings : List LocalBinding) :
   | .require condition => .require (closeExpression types bindings condition)
   | .writeCell state ty value => .writeCell state ty (closeExpression types bindings value)
   | .emitEvent kind payload => .emitEvent kind (closeExpression types bindings payload)
+  | .claimContractCall address entryPointHash commitment =>
+      .claimContractCall (closeExpression types bindings address)
+        (closeExpression types bindings entryPointHash) (closeExpression types bindings commitment)
   | .claimShielded kind digest => .claimShielded kind (closeExpression types bindings digest)
   | .readMap state destination keyTy valueTy key =>
       .readMap state destination keyTy valueTy (closeExpression types bindings key)
@@ -3681,6 +3707,22 @@ mutual
         let payload ← liftD (typedExpr declaration.span (.bytes kind.payloadSize) payload)
         appendLedgerEffect declaration.span (.emitEvent kind payload)
         lowerBodyWith program declaration env rest continuation
+      | .claimContractCall address entryPointHash commitment => do
+        unless (← get).ledgerMode do
+          liftD (fail declaration.span "native helper capability unavailable: contract call claim")
+        let address ← lowerTerm program declaration.id.scope env declaration.span address
+        appendLedgerConstraints declaration.span address.constraints
+        let address ← liftD (typedExprWithByteProjection declaration.span (.bytes 32) address)
+        let entryPointHash ← lowerTerm program declaration.id.scope env declaration.span entryPointHash
+        appendLedgerConstraints declaration.span entryPointHash.constraints
+        let entryPointHash ← liftD
+          (typedExprWithByteProjection declaration.span (.bytes 32) entryPointHash)
+        let commitment ← lowerTerm program declaration.id.scope env declaration.span commitment
+        appendLedgerConstraints declaration.span commitment.constraints
+        let commitment ← liftD (typedExpr declaration.span .native commitment)
+        appendLedgerEffect declaration.span
+          (.claimContractCall address entryPointHash commitment)
+        lowerBodyWith program declaration env rest continuation
       | .claimShielded kind digest => do
         unless (← get).ledgerMode do
           liftD (fail declaration.span "native helper capability unavailable: shielded claim")
@@ -3851,6 +3893,7 @@ private def compileEntrypointForState (allowWitnesses : Bool) (limits : Limits) 
     for effect in summary.effects do
       unless effect == .assertion || effect == .fallibleCast ||
           effect == .ledgerRead || effect == .ledgerWrite || effect == .event || effect == .asset ||
+          effect == .crossCall ||
           (allowWitnesses && effect == .witness) do
         let declaration ← lookup program summary.id {}
         fail declaration.span s!"native ledger helper capability unavailable: {repr effect}"
@@ -4248,6 +4291,8 @@ mutual
       liftM (fail declaration.span "ledger writes require the native contract runtime")
     | .emitEvent .. :: _ =>
       liftM (fail declaration.span "ledger events require the native contract runtime")
+    | .claimContractCall .. :: _ =>
+      liftM (fail declaration.span "contract call claims require the native contract runtime")
     | .claimShielded .. :: _ =>
       liftM (fail declaration.span "shielded claims require the native contract runtime")
     | .stage _ _ _ _ :: _ => liftM (fail declaration.span "private staging requires the portable control runtime")

@@ -1791,7 +1791,7 @@
       "layer": "language-ledger",
       "surface": "Cross-contract execution",
       "noctiumStatus": "subset",
-      "notes": "Bind address, entry-point hash, arguments/results and communication commitment. Enforce conformance, key agreement, no re-entry, witness restrictions.",
+      "notes": "Bind address, entry-point hash, arguments/results and communication commitment. Enforce conformance, key agreement, no re-entry, witness restrictions. A guarded native helper claim compiles into the existing call effect and assembles a scalar caller/callee pair. Wrong address, selector or return rejects. The pinned Compact helper call compiles and rejects an undisclosed target.",
       "source": [
         "reference",
         "release0360"
@@ -1803,6 +1803,9 @@
         "HOST"
       ],
       "observedEvidence": [
+        "tests/ContractCaller.lean",
+        "tests/compact/HelperContractCall.compact",
+        "runtime/tests/native_composition.rs",
         "docs/development/typed-reference-record-key-localnet-receipt.json",
         "docs/development/native-composition-receipt.json",
         "docs/development/native-aggregate-composition-receipt.json",
@@ -2255,7 +2258,7 @@
       "layer": "language-ledger",
       "surface": "Kernel.claimContractCall",
       "noctiumStatus": "related-subset",
-      "notes": "Direct call-claim tests cover public target, entrypoint hash and control, require explicit commitment disclosure, and reject private target/hash/control or an undisclosed commitment. Named-interface composition covers one stateful route and aggregate call accepted on localnet. Native checked intent assembly accepts the matched ConfidentialToken mint commitment and rejects a changed recipient or amount. Other claim shapes and full Compact equivalence remain unverified.",
+      "notes": "Direct call-claim tests cover public target, entrypoint hash and control, require explicit commitment disclosure, and reject private target/hash/control or an undisclosed commitment. Named-interface composition covers one stateful route and aggregate call accepted on localnet. Native checked intent assembly accepts the matched ConfidentialToken mint commitment and rejects a changed recipient or amount. Other claim shapes and full Compact equivalence remain unverified. Native helper declarations check claim operands, guard disclosure and transitive purity. The inactive helper branch emits no active claim.",
       "source": [
         "adt"
       ],
@@ -2265,6 +2268,9 @@
         "LEDGER"
       ],
       "observedEvidence": [
+        "tests/ContractCaller.lean",
+        "tests/compact/HelperContractCall.compact",
+        "runtime/tests/native_composition.rs",
         "tests/NativeCallClaims.lean",
         "tests/ContractInterfaceComposition.lean",
         "examples/openzeppelin/ConfidentialTokenComposition.lean",
