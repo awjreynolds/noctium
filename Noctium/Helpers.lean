@@ -593,15 +593,31 @@ private def flatStaticAssertionSequence : List Statement → Bool
     | .assert condition => staticAssertionTerm condition
     | _ => false
 
-private def flatUnitWitnessCallSequence (program : Program) (index : String) :
-    List Statement → Bool
-  | [.evaluate (.witnessCall _ name [.ref argument])] =>
-    if argument != index then false else
-      match program.witnesses.find? (·.name == name) with
-      | some signature =>
-        signature.result == .unit && signature.parameters.map (·.type) == [.scalar .native]
-      | none => false
-  | _ => false
+private partial def flatReferenceName : Term → Option String
+  | .ref name => some name
+  | .at _ value => flatReferenceName value
+  | _ => none
+
+private def flatUnitWitnessProvider (program : Program) (name : String) : Bool :=
+  match program.witnesses.find? (·.name == name) with
+  | some signature =>
+    signature.result == .unit && signature.parameters.map (·.type) == [.scalar .native]
+  | none => false
+
+private def flatUnitWitnessCallName (program : Program) (index : String) :
+    List Statement → Option String
+  | [.evaluate (.witnessCall _ name [argument])] =>
+    if flatReferenceName argument == some index && flatUnitWitnessProvider program name then
+      some name else none
+  | [.bind alias (.scalar .native) source,
+      .evaluate (.witnessCall _ name [argument])] =>
+    if flatReferenceName source == some index && flatReferenceName argument == some alias &&
+        flatUnitWitnessProvider program name then some name else none
+  | _ => none
+
+private def flatUnitWitnessCallSequence (program : Program) (index : String)
+    (body : List Statement) : Bool :=
+  (flatUnitWitnessCallName program index body).isSome
 
 private def validateRangeBounds (span : SourceSpan) (index : String) (start stop : Nat) :
     Except Diagnostic Nat := do
@@ -1274,15 +1290,12 @@ private partial def expandRangeStatement (program : Program) (statement : Statem
   | .forRange index start stop body => do
     if flatStaticAssertionSequence body then
       return [.forRange index start stop body]
-    if flatUnitWitnessCallSequence program index body then
-      match body with
-      | [.evaluate (.witnessCall _ name [.ref _])] => do
-        let mut reversed := []
-        for offset in List.range (stop - start) do
-          let site ← freshLoopWitnessSite
-          reversed := .evaluate (.witnessCall site name [.native (start + offset)]) :: reversed
-        return reversed.reverse
-      | _ => pure ()
+    if let some name := flatUnitWitnessCallName program index body then
+      let mut reversed := []
+      for offset in List.range (stop - start) do
+        let site ← freshLoopWitnessSite
+        reversed := .evaluate (.witnessCall site name [.native (start + offset)]) :: reversed
+      return reversed.reverse
     let mut reversed := []
     for offset in List.range (stop - start) do
       let body ← expandRangeBody program body

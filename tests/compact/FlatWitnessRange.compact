@@ -16,3 +16,11 @@ export circuit shortRange(): Field {
 export circuit longRange(): Field {
   return visits<1025>();
 }
+
+export circuit aliasRange(): Field {
+  for (const index of 0..1200) {
+    const localIndex = index as Field;
+    visit(localIndex);
+  }
+  return 0 as Field;
+}
