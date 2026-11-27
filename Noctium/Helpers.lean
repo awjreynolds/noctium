@@ -630,6 +630,42 @@ private def flatUnitWitnessCallSequence (program : Program) (index : String)
     (body : List Statement) : Bool :=
   (flatUnitWitnessCallName program index body).isSome
 
+-- A range iteration expands to an unconditional lexical block whose first
+-- statement binds the literal Native index. These siblings stay sequential,
+-- so charge each statement once plus the lowerer's three control frames per
+-- block. Node and execution budgets still count every copy.
+private def expandedRangeIterationBlock : Statement → Bool
+  | .branch (.bool true) (.bind _ (.scalar .native) (.native _) :: _) [] => true
+  | _ => false
+
+private partial def statementTreeCount : List Statement → Nat
+  | [] => 0
+  | .branch _ yes no :: rest => 1 + statementTreeCount yes + statementTreeCount no + statementTreeCount rest
+  | .forRange _ _ _ body :: rest => 1 + statementTreeCount body + statementTreeCount rest
+  | _ :: rest => 1 + statementTreeCount rest
+
+private partial def expandedRangeIterationStatements : List Statement → Nat
+  | [] => 0
+  | statement :: rest =>
+    if expandedRangeIterationBlock statement then
+      statementTreeCount [statement] + expandedRangeIterationStatements rest
+    else
+      let nested := match statement with
+        | .branch _ yes no => expandedRangeIterationStatements yes + expandedRangeIterationStatements no
+        | .forRange _ _ _ body => expandedRangeIterationStatements body
+        | _ => 0
+      nested + expandedRangeIterationStatements rest
+
+private partial def expandedRangeIterationBlocks : List Statement → Nat
+  | [] => 0
+  | statement :: rest =>
+    let nested := match statement with
+      | .branch _ yes no => expandedRangeIterationBlocks yes + expandedRangeIterationBlocks no
+      | .forRange _ _ _ body => expandedRangeIterationBlocks body
+      | _ => 0
+    (if expandedRangeIterationBlock statement then 1 else 0) + nested +
+      expandedRangeIterationBlocks rest
+
 private def validateRangeBounds (span : SourceSpan) (index : String) (start stop : Nat) :
     Except Diagnostic Nat := do
   textMetadata index
@@ -687,7 +723,9 @@ private partial def flatWitnessCallDepthSavings (program : Program) : List State
       | [] => 0
       | statement :: rest =>
         let nested := match statement with
-          | .branch _ yes no => flatWitnessCallDepthSavings program yes + flatWitnessCallDepthSavings program no
+          | .branch _ yes no =>
+            if expandedRangeIterationBlock statement then 0
+            else flatWitnessCallDepthSavings program yes + flatWitnessCallDepthSavings program no
           | .forRange _ _ _ body => flatWitnessCallDepthSavings program body
           | _ => 0
         nested + flatWitnessCallDepthSavings program rest
@@ -1121,10 +1159,12 @@ private def sourcePreflight (limits : Limits) (program : Program) :
     discard (witnessSites declaration.body limits.maxSourceNodes)
     available := available - nodes
     let repeatedWitnessDepthSavings := flatWitnessCallDepthSavings program declaration.body
+    let iterationStatements := expandedRangeIterationStatements declaration.body
+    let iterationBlocks := expandedRangeIterationBlocks declaration.body
     sizes := (declaration.id, {
       nodes := 3 * (nodes + declaration.parameters.length + 2)
-      depth := 3 * (statements - repeatedWitnessDepthSavings + depth +
-        declaration.parameters.length + 2)}) :: sizes
+      depth := 3 * (statements - repeatedWitnessDepthSavings - iterationStatements + depth +
+        declaration.parameters.length + 2) + iterationStatements + 3 * iterationBlocks}) :: sizes
   pure sizes
 
 private partial def bodyHasForRange : List Statement → Bool
