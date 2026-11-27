@@ -57,7 +57,7 @@ private def codecDeclarations (codec : Helpers.Wire.Codec) :
   | .ok _ => Bool.false
 
 #guard match codecDeclarations (Helpers.Wire.maybe "CompositeMaybeInput.TooWide" {
-    limitsWire with frameBytes := Noctium.maxBytesLength
+    limitsWire with frameBytes := Noctium.maxByteOperationLength + 1
   }) with
   | .error message => message.contains "aggregate wire width exceeds the source limit"
   | .ok _ => Bool.false
