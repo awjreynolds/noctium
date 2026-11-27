@@ -1324,7 +1324,7 @@ private partial def validateSignatureType (fuel : Nat) (allowOpaque : Bool)
       validateSignatureType fuel allowOpaque element
     | .bytes length => do
       let length ← canonicalDecimal length
-      unless length ≤ Types.defaultLimits.maxVectorLength do throw "signature byte array exceeds target maximum"
+      unless length ≤ Types.defaultLimits.maxBytesLength do throw "signature byte array exceeds target maximum"
 
 private def validateSignatureArgument (argument : SignatureArgument) : Except String Unit := do
   match argument with

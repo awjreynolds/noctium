@@ -11,19 +11,33 @@ private theorem bind_ok {α β : Type} {first : Except ε α}
   cases first <;> simp [Bind.bind, Except.bind]
 
 private theorem acceptedCellStateType (caps : Capabilities) (ty : Ty)
-    (accepted : (if ty.isOpaqueString then ty.validate caps
-      else if ty.isOpaqueString then
-        Except.error "OpaqueString is only supported as a root Bytes32 tree Map value"
-      else ty.validate caps) = .ok ()) :
+    (accepted : (if ty.isOpaqueString then ty.validate caps else do
+      if ty.isOpaqueString then
+        throw "OpaqueString is only supported as a root Bytes32 tree Map value"
+      if let .bytes length := ty then
+        unless length ≤ maxByteOperationLength do
+          throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
+      ty.validate caps) = .ok ()) :
     ty.validate caps = .ok () := by
-  cases isOpaqueString : ty.isOpaqueString <;> simp_all
+  cases ty with
+  | bytes length =>
+      by_cases bound : length ≤ maxByteOperationLength <;>
+        simp_all [Ty.isOpaqueString, bound, Bind.bind, Except.bind]
+  | _ => simp_all [Ty.isOpaqueString, Bind.bind, Except.bind]
 
 private theorem acceptedMapStateType (caps : Capabilities) (ty : Ty)
     (accepted : (if ty.isOpaqueString then
       Except.error "OpaqueString is only supported as a root Bytes32 tree Map value"
+      else if let .bytes length := ty then
+        if length ≤ maxByteOperationLength then ty.validate caps
+        else Except.error s!"byte string length exceeds the maximum of {maxByteOperationLength}"
       else ty.validate caps) = .ok ()) :
     ty.validate caps = .ok () := by
-  cases isOpaqueString : ty.isOpaqueString <;> simp_all
+  cases ty with
+  | bytes length =>
+      by_cases bound : length ≤ maxByteOperationLength <;>
+        simp_all [Ty.isOpaqueString, bound, Bind.bind, Except.bind]
+  | _ => simp_all [Ty.isOpaqueString, Bind.bind, Except.bind]
 
 /-- Accepted native lowering validates every cell type and both map types
 through the current source entrypoint prechecks. -/
@@ -64,9 +78,13 @@ theorem validated_state_types (state : List StateDecl) (ep : Entrypoint)
       · rename_i result checked
         change (if ty.isOpaqueString then ty.validate
           GenericStateEffectValidation.stateEffectCaps
-          else if ty.isOpaqueString then
-            Except.error "OpaqueString is only supported as a root Bytes32 tree Map value"
-          else ty.validate GenericStateEffectValidation.stateEffectCaps) = .ok result at checked
+          else do
+            if ty.isOpaqueString then
+              throw "OpaqueString is only supported as a root Bytes32 tree Map value"
+            if let .bytes length := ty then
+              unless length ≤ maxByteOperationLength do
+                throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
+            ty.validate GenericStateEffectValidation.stateEffectCaps) = .ok result at checked
         have typeValid : ty.validate GenericStateEffectValidation.stateEffectCaps = .ok () := by
           cases result
           exact acceptedCellStateType GenericStateEffectValidation.stateEffectCaps ty checked
@@ -80,6 +98,10 @@ theorem validated_state_types (state : List StateDecl) (ep : Entrypoint)
       · rename_i keyResult keyChecked
         change (if keyTy.isOpaqueString then
           Except.error "OpaqueString is only supported as a root Bytes32 tree Map value"
+          else if let .bytes length := keyTy then
+            if length ≤ maxByteOperationLength then
+              keyTy.validate GenericStateEffectValidation.stateEffectCaps
+            else Except.error s!"byte string length exceeds the maximum of {maxByteOperationLength}"
           else keyTy.validate GenericStateEffectValidation.stateEffectCaps) = .ok keyResult at keyChecked
         have keyValid : keyTy.validate GenericStateEffectValidation.stateEffectCaps = .ok () := by
           cases keyResult
@@ -91,6 +113,10 @@ theorem validated_state_types (state : List StateDecl) (ep : Entrypoint)
         · rename_i valueResult valueChecked
           change (if valueTy.isOpaqueString then
             Except.error "OpaqueString is only supported as a root Bytes32 tree Map value"
+            else if let .bytes length := valueTy then
+              if length ≤ maxByteOperationLength then
+                valueTy.validate GenericStateEffectValidation.stateEffectCaps
+              else Except.error s!"byte string length exceeds the maximum of {maxByteOperationLength}"
             else valueTy.validate GenericStateEffectValidation.stateEffectCaps) = .ok valueResult at valueChecked
           have valueValid : valueTy.validate GenericStateEffectValidation.stateEffectCaps = .ok () := by
             cases valueResult

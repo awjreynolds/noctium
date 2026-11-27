@@ -442,7 +442,7 @@ private partial def consumeTypeNodes (span : SourceSpan) (remaining : Nat)
     if length > Types.defaultLimits.maxVectorLength then resource span "module vector length"
     consumeTypeNodes span remaining element
   | .bytes length => do
-    if length > Types.defaultLimits.maxVectorLength then resource span "module byte length"
+    if length > Types.defaultLimits.maxBytesLength then resource span "module byte length"
     pure remaining
   | .structure id | .enumeration id => do
     validText span id

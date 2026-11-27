@@ -277,7 +277,7 @@ impl ForeignValue {
             return Self::from_bytes(ty, bytes);
         }
         ensure!(
-            bytes.len() <= crate::scalars::MAX_BYTES_LENGTH,
+            bytes.len() <= crate::scalars::MAX_BYTE_OPERATION_LENGTH,
             "foreign Bytes input exceeds compiler limit"
         );
         let value = from_bytes_offcircuit(&ty.native_type(), bytes)?;

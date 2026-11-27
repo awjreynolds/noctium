@@ -453,8 +453,8 @@ private def readScalarTy (stx : TSyntax `nltype) : CommandElabM Ty := do
     | _ => throwErrorAt stx "invalid unsigned range"
   | `(nltype| Bytes32) => pure (.bytes 32)
   | `(nltype| Bytes $length:num) => do
-    if length.getNat > Types.defaultLimits.maxVectorLength then
-      throwErrorAt stx s!"byte string length exceeds the maximum of {Types.defaultLimits.maxVectorLength}"
+    if length.getNat > Types.defaultLimits.maxBytesLength then
+      throwErrorAt stx s!"byte string length exceeds the maximum of {Types.defaultLimits.maxBytesLength}"
     pure (.bytes length.getNat)
   | `(nltype| OpaqueBytes) => pure .opaqueBytes
   | `(nltype| OpaqueString) => pure .opaqueString
@@ -2699,8 +2699,8 @@ private partial def lowerExpr (programName callPrefix : String) (env : SurfaceEn
     pure {type := .scalar (.bytes 32), term := .bytes32Literal (bytes ++ List.replicate (32 - bytes.length) 0)}
   | `(nlexpr| bytes($length:num, $literal:str)) => do
     let length := length.getNat
-    if length > Types.defaultLimits.maxVectorLength then
-      throwErrorAt stx s!"byte string length exceeds the maximum of {Types.defaultLimits.maxVectorLength}"
+    if length > Types.defaultLimits.maxBytesLength then
+      throwErrorAt stx s!"byte string length exceeds the maximum of {Types.defaultLimits.maxBytesLength}"
     let bytes := literal.getString.toUTF8.data.toList.map UInt8.toNat
     if bytes.length > length then
       throwErrorAt stx s!"byte string literal exceeds its declared length {length}"

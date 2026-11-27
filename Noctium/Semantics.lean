@@ -38,7 +38,7 @@ def Value.as : (ty : Ty) → Value → Option ty.Denote
   | .bytes length, .bytes found values =>
     if length == found && values.length == length && values.all (· ≤ 255) then some values else none
   | .opaqueBytes, .opaqueBytes values =>
-    if values.length ≤ maxBytesLength && values.all (· ≤ 255) &&
+    if values.length ≤ maxByteOperationLength && values.all (· ≤ 255) &&
         (values.isEmpty || values.getLast! != 0) then some values else none
   | .opaqueString, .opaqueString text =>
     if text.utf8ByteSize ≤ maxOpaqueStringBytes &&
@@ -241,7 +241,7 @@ private def canonical (ctx : EvalContext) (ty : Ty) (v : ty.Denote) : Bool :=
   | .bool => true
   | .uint maximum => maximum ≤ ScalarPolicy.maxUint && v ≤ maximum && v < ctx.modulus
   | .bytes length => v.length == length && v.all (· ≤ 255)
-  | .opaqueBytes => v.length ≤ maxBytesLength && v.all (· ≤ 255) &&
+  | .opaqueBytes => v.length ≤ maxByteOperationLength && v.all (· ≤ 255) &&
       (v.isEmpty || v.getLast! != 0)
   | .opaqueString => v.utf8ByteSize ≤ maxOpaqueStringBytes &&
       (v.toUTF8.data.isEmpty || v.toUTF8.data.back! != 0)
@@ -277,7 +277,7 @@ theorem canonical_eq (ctx : EvalContext) (ty : Ty) (value : ty.Denote) :
       | .bool => true
       | .uint maximum => maximum ≤ ScalarPolicy.maxUint && value ≤ maximum && value < ctx.modulus
       | .bytes length => value.length == length && value.all (· ≤ 255)
-      | .opaqueBytes => value.length ≤ maxBytesLength && value.all (· ≤ 255) &&
+      | .opaqueBytes => value.length ≤ maxByteOperationLength && value.all (· ≤ 255) &&
           (value.isEmpty || value.getLast! != 0)
       | .opaqueString => value.utf8ByteSize ≤ maxOpaqueStringBytes &&
           (value.toUTF8.data.isEmpty || value.toUTF8.data.back! != 0)
@@ -378,8 +378,8 @@ private def checkedForeignBytes (length : Nat) (bytes : List Nat) :
   pure bytes
 
 private def checkForeignByteInput (length : Nat) (bytes : List Nat) : Except String Unit := do
-  if length > maxBytesLength then
-    throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+  if length > maxByteOperationLength then
+    throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
   unless bytes.length == length && bytes.all (· ≤ 255) do
     throw "foreign byte input is not a canonical fixed byte string"
 private def checkedForeignToBytes : (ctx : EvalContext) → (kind : Foreign.Kind) →
@@ -579,7 +579,7 @@ decreasing_by
 private def fabAlignedFieldValues (ctx : EvalContext) (env : EvalEnv)
     : Types.Layout → Sigma Expr → Except String (List Nat)
   | .bytes length .byteField, ⟨.bytes actualLength, expression⟩ => do
-    unless length == actualLength && length ≤ maxBytesLength do
+    unless length == actualLength && length ≤ maxByteOperationLength do
       throw "mixed FAB Bytes field type mismatch"
     let bytes ← expression.eval ctx env
     unless bytes.length == length && bytes.all (· ≤ 255) do
@@ -673,7 +673,7 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
     if result < ctx.modulus then pure result else .error "noncanonical packed byte field"
   | .opaqueBytesProjection value => do
     let bytes ← value.eval ctx env
-    unless bytes.length ≤ maxBytesLength && bytes.all (· ≤ 255) &&
+    unless bytes.length ≤ maxByteOperationLength && bytes.all (· ≤ 255) &&
         (bytes.isEmpty || bytes.getLast! != 0) do
       throw "opaque byte input is not in canonical Compress form"
     let projected ← if bytes.isEmpty then pure 0 else ctx.opaqueBytesCompress bytes
@@ -705,15 +705,15 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
   | .concatBytes left right => do
     pure ((← left.eval ctx env) ++ (← right.eval ctx env))
   | .sha256 (length := length) value => do
-    if length > maxBytesLength then
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if length > maxByteOperationLength then
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     let input ← value.eval ctx env
     if input.length != length || !input.all (· ≤ 255) then
       throw "SHA-256 input is not a canonical fixed byte string"
     evaluatePersistentHash ctx input
   | .sha512 (length := length) value => do
-    if length > maxBytesLength then
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if length > maxByteOperationLength then
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     let input ← value.eval ctx env
     if input.length != length || !input.all (· ≤ 255) then
       throw "SHA-512 input is not a canonical fixed byte string"
@@ -738,8 +738,8 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
       throw "FAB Keccak-256 oracle returned a malformed Bytes32 digest"
     pure digest
   | .keccak256 (length := length) value => do
-    if length > maxBytesLength then
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if length > maxByteOperationLength then
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     let input ← value.eval ctx env
     if input.length != length || !input.all (· ≤ 255) then
       throw "Keccak-256 input is not a canonical fixed byte string"
@@ -906,14 +906,14 @@ def Expr.eval (ctx : EvalContext) (env : EvalEnv) : Expr ty → Except String ty
   | .fromBytes32 _ => .error "fromBytes32 supports only Native, JubjubScalar and JubjubPoint"
   | .fromBytes (target := .native) (length := length) value => do
     let bytes ← value.eval ctx env
-    if length > maxBytesLength then
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if length > maxByteOperationLength then
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     if ctx.modulus == 0 then throw "invalid zero Native modulus for byte decoding"
     pure (bytes32IntegerLE bytes % ctx.modulus)
   | .fromBytes (target := .jubjubScalar) (length := length) value => do
     let bytes ← value.eval ctx env
-    if length > maxBytesLength then
-      throw s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if length > maxByteOperationLength then
+      throw s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     pure (bytes32IntegerLE bytes % Jubjub.scalarOrder)
   | .fromBytes _ => .error "fromBytes supports only Native and JubjubScalar"
   | .inv (ty := .native) value => do

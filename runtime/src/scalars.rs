@@ -7,7 +7,9 @@ use base_crypto::fab::ValueAtom;
 use num_bigint::BigUint;
 
 pub const MAX_UINT_BITS: usize = 248;
-pub const MAX_BYTES_LENGTH: usize = 1024;
+// Keep the native byte bridge within its existing budget of 34 31-byte chunks.
+pub const MAX_BYTES_LENGTH: usize = 34 * 31;
+pub const MAX_BYTE_OPERATION_LENGTH: usize = 1024;
 pub(super) const MAX_OPAQUE_BYTES_LENGTH: usize = 1_048_576;
 pub(crate) const MAX_OPAQUE_STRING_LENGTH: usize = 1_048_576;
 

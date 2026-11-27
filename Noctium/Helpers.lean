@@ -198,7 +198,7 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
   match operation with
   | .bytesLiteral length values =>
     unless argumentCount == 0 do throw "bytes literal does not accept arguments"
-    unless length ≤ Types.defaultLimits.maxVectorLength do throw "byte literal length exceeds the source limit"
+    unless length ≤ maxBytesLength do throw "byte literal length exceeds the source limit"
     unless values.length == length && values.all (· ≤ 255) do
       throw "byte literal must contain exactly its declared number of octets"
     pure ([], .bytes length)
@@ -225,15 +225,15 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
     pure ([.jubjubPoint], .bytes 32)
   | .sha256 length =>
     unless argumentCount == 1 do throw "sha256 requires one byte-string argument"
-    unless length ≤ Types.defaultLimits.maxVectorLength do throw "sha256 input length exceeds the source limit"
+    unless length ≤ maxByteOperationLength do throw "sha256 input length exceeds the source limit"
     pure ([.bytes length], .bytes 32)
   | .sha512 length =>
     unless argumentCount == 1 do throw "sha512 requires one byte-string argument"
-    unless length ≤ Types.defaultLimits.maxVectorLength do throw "sha512 input length exceeds the source limit"
+    unless length ≤ maxByteOperationLength do throw "sha512 input length exceeds the source limit"
     pure ([.bytes length], .bytes 64)
   | .keccak256 length =>
     unless argumentCount == 1 do throw "keccak256 requires one byte-string argument"
-    unless length ≤ Types.defaultLimits.maxVectorLength do throw "keccak256 input length exceeds the source limit"
+    unless length ≤ maxByteOperationLength do throw "keccak256 input length exceeds the source limit"
     pure ([.bytes length], .bytes 32)
   | .keccak256Secp256k1Point =>
     unless argumentCount == 1 do throw "keccak256 Secp256k1Point requires one point argument"
@@ -261,18 +261,18 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
     pure ([.bytes 32], .bytes 32)
   | .reverseBytes length =>
     unless argumentCount == 1 do throw "reverseBytes requires one byte-string argument"
-    unless length ≤ Types.defaultLimits.maxVectorLength do throw "reverseBytes length exceeds the source limit"
+    unless length ≤ maxByteOperationLength do throw "reverseBytes length exceeds the source limit"
     pure ([.bytes length], .bytes length)
   | .sliceBytes length start stop =>
     unless argumentCount == 1 do throw "sliceBytes requires one byte-string argument"
-    unless length ≤ Types.defaultLimits.maxVectorLength do throw "sliceBytes length exceeds the source limit"
+    unless length ≤ maxByteOperationLength do throw "sliceBytes length exceeds the source limit"
     unless start ≤ stop && stop ≤ length do throw "sliceBytes bounds are outside the source byte string"
     pure ([.bytes length], .bytes (stop - start))
   | .concatBytes leftLength rightLength =>
     unless argumentCount == 2 do throw "concatBytes requires two byte-string arguments"
-    unless leftLength ≤ Types.defaultLimits.maxVectorLength &&
-        rightLength ≤ Types.defaultLimits.maxVectorLength &&
-        leftLength + rightLength ≤ Types.defaultLimits.maxVectorLength do
+    unless leftLength ≤ maxByteOperationLength &&
+        rightLength ≤ maxByteOperationLength &&
+        leftLength + rightLength ≤ maxByteOperationLength do
       throw "concatBytes result exceeds the source byte limit"
     pure ([.bytes leftLength, .bytes rightLength], .bytes (leftLength + rightLength))
   | .foreignToBytes kind => do
@@ -280,7 +280,7 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
     pure ([.foreign kind], .bytes kind.byteLength)
   | .foreignFromBytes kind length => do
     unless argumentCount == 1 do throw "foreignFromBytes requires one byte-string argument"
-    unless length ≤ Types.defaultLimits.maxVectorLength do
+    unless length ≤ maxByteOperationLength do
       throw "foreignFromBytes input length exceeds the source limit"
     if let .point _ := kind then
       unless length == kind.byteLength do
@@ -297,15 +297,15 @@ def BytesOp.signature (operation : BytesOp) (argumentCount : Nat) : Except Strin
   | .serialize type length | .deserialize type length =>
     unless argumentCount == 1 do throw "wire codec requires one argument"
     let some width := Wire.scalarWidth type | throw "wire codec requires a scalar or fixed bytes"
-    unless width ≤ length && length ≤ maxBytesLength do
-      throw s!"wire codec requires a byte length from {width} through {maxBytesLength}"
+    unless width ≤ length && length ≤ maxByteOperationLength do
+      throw s!"wire codec requires a byte length from {width} through {maxByteOperationLength}"
     match operation with
     | .serialize .. => pure ([type], .bytes length)
     | _ => pure ([.bytes length], type)
   | .fromBytesChecked target length => do
     unless argumentCount == 1 do throw "fromBytesChecked requires one argument"
-    unless 0 < length && length ≤ maxBytesLength do
-      throw s!"fromBytesChecked requires a byte length from 1 through {maxBytesLength}"
+    unless 0 < length && length ≤ maxByteOperationLength do
+      throw s!"fromBytesChecked requires a byte length from 1 through {maxByteOperationLength}"
     match target with
     | .native => pure ([.bytes length], .native)
     | .uint maximum => do

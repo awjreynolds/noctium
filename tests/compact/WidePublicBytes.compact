@@ -1,0 +1,5 @@
+pragma language_version >= 0.28;
+
+export circuit roundTrip(payload: Bytes<1025>): Bytes<1025> {
+  return payload;
+}

@@ -322,8 +322,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro length value ih caps types ctx left right valid agreement
     cases supported : caps.bytes32Conversions
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · have lengthOk : length ≤ maxBytesLength := by
-        by_cases bound : length ≤ maxBytesLength
+    · have lengthOk : length ≤ maxByteOperationLength := by
+        by_cases bound : length ≤ maxByteOperationLength
         · exact bound
         · simp [Expr.validate, supported, bound, Bind.bind, Except.bind, throw] at valid
       cases child : value.validate caps types with
@@ -336,8 +336,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro length value start stop ih caps types ctx left right valid agreement
     cases supported : caps.bytes32Conversions
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · have lengthOk : length ≤ maxBytesLength := by
-        by_cases bound : length ≤ maxBytesLength
+    · have lengthOk : length ≤ maxByteOperationLength := by
+        by_cases bound : length ≤ maxByteOperationLength
         · exact bound
         · simp [Expr.validate, supported, bound, Bind.bind, Except.bind, throw] at valid
       have startOk : start ≤ stop := by
@@ -358,8 +358,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro leftLength rightLength left right ihLeft ihRight caps types ctx leftEnv rightEnv valid agreement
     cases supported : caps.bytes32Conversions
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · have lengthOk : leftLength + rightLength ≤ maxBytesLength := by
-        by_cases bound : leftLength + rightLength ≤ maxBytesLength
+    · have lengthOk : leftLength + rightLength ≤ maxByteOperationLength := by
+        by_cases bound : leftLength + rightLength ≤ maxByteOperationLength
         · exact bound
         · simp [Expr.validate, supported, bound, Bind.bind, Except.bind, throw] at valid
       cases first : left.validate caps types with
@@ -379,11 +379,15 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro length value ih caps types ctx left right valid agreement
     cases supported : caps.persistentHash32
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · cases typeValid : (Ty.bytes length).validate caps with
-      | error message => simp [Expr.validate, supported, typeValid, Bind.bind, Except.bind] at valid
+    · have lengthOk : length ≤ maxByteOperationLength := by
+        by_cases bound : length ≤ maxByteOperationLength
+        · exact bound
+        · simp [Expr.validate, supported, bound, Bind.bind, Except.bind, throw] at valid
+      cases typeValid : (Ty.bytes length).validate caps with
+      | error message => simp [Expr.validate, supported, lengthOk, typeValid, Bind.bind, Except.bind] at valid
       | ok typeChecked =>
         cases child : value.validate caps types with
-        | error message => simp [Expr.validate, supported, typeValid, child, Bind.bind, Except.bind] at valid
+        | error message => simp [Expr.validate, supported, lengthOk, typeValid, child, Bind.bind, Except.bind] at valid
         | ok checked =>
           have accepted : value.validate caps types = .ok () := child
           simp [Expr.eval, ih caps types ctx left right accepted agreement]
@@ -391,8 +395,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro length value ih caps types ctx left right valid agreement
     cases supported : caps.sha512
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · have lengthOk : length ≤ maxBytesLength := by
-        by_cases bound : length ≤ maxBytesLength
+    · have lengthOk : length ≤ maxByteOperationLength := by
+        by_cases bound : length ≤ maxByteOperationLength
         · exact bound
         · simp [Expr.validate, supported, bound, Bind.bind, Except.bind, throw] at valid
       cases child : value.validate caps types with
@@ -405,8 +409,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro length value ih caps types ctx left right valid agreement
     cases supported : caps.keccak256
     · simp [Expr.validate, supported, Bind.bind, Except.bind, throw] at valid
-    · have lengthOk : length ≤ maxBytesLength := by
-        by_cases bound : length ≤ maxBytesLength
+    · have lengthOk : length ≤ maxByteOperationLength := by
+        by_cases bound : length ≤ maxByteOperationLength
         · exact bound
         · simp [Expr.validate, supported, bound, Bind.bind, Except.bind, throw] at valid
       cases child : value.validate caps types with
@@ -471,8 +475,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     intro target length value ih caps types ctx left right valid agreement
     cases target with
       | native =>
-        have lengthOk : length ≤ maxBytesLength := by
-          by_cases bound : length ≤ maxBytesLength
+        have lengthOk : length ≤ maxByteOperationLength := by
+          by_cases bound : length ≤ maxByteOperationLength
           · exact bound
           · simp [Expr.validate, BEq.beq, instBEqTy.beq, bound, Bind.bind, Except.bind, throw] at valid
         cases typeValid : Ty.native.validate caps with
@@ -483,8 +487,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
           have equal := ih caps types ctx left right accepted agreement
           simp [Expr.eval, equal]
       | jubjubScalar =>
-        have lengthOk : length ≤ maxBytesLength := by
-          by_cases bound : length ≤ maxBytesLength
+        have lengthOk : length ≤ maxByteOperationLength := by
+          by_cases bound : length ≤ maxByteOperationLength
           · exact bound
           · simp [Expr.validate, BEq.beq, instBEqTy.beq, bound, Bind.bind, Except.bind, throw] at valid
         cases typeValid : Ty.jubjubScalar.validate caps with
@@ -580,8 +584,8 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
     · cases typeValid : (Ty.foreign kind).validate caps with
       | error message => simp [Expr.validate, supported, typeValid, Bind.bind, Except.bind] at valid
       | ok typeChecked =>
-        have lengthOk : length ≤ maxBytesLength := by
-          by_cases bound : length ≤ maxBytesLength
+        have lengthOk : length ≤ maxByteOperationLength := by
+          by_cases bound : length ≤ maxByteOperationLength
           · exact bound
           · simp [Expr.validate, supported, typeValid, bound, Bind.bind, Except.bind, throw] at valid
         cases pointEncoding : kind.byteLength == 33 with
@@ -594,7 +598,7 @@ private theorem eval_agreements (ty : Ty) (expression : Expr ty) : Agreements ty
             simp [Expr.eval, ih caps types ctx left right accepted agreement]
         | true =>
           by_cases exactLength : length = 33
-          · have exactBound : 33 ≤ maxBytesLength := by simpa [exactLength] using lengthOk
+          · have exactBound : 33 ≤ maxByteOperationLength := by simpa [exactLength] using lengthOk
             cases child : value.validate caps types with
             | error message => simp [Expr.validate, supported, typeValid, lengthOk, exactBound, pointEncoding, exactLength, child, Bind.bind, Except.bind] at valid
             | ok checked =>

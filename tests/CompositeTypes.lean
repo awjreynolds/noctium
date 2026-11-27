@@ -160,7 +160,8 @@ private def originalVariantOrder : CompositeEnv := {
 #guard ((errorResult nestedEnvironment (.vector 2 (.scalar .native))
     {defaultLimits with maxExpandedNodes := 2}).isSome)
 #guard ((layoutResult nestedEnvironment (.vector 1024 (.scalar .bool))).map Layout.leafCount == some 1024)
-#guard ((errorResult nestedEnvironment (.bytes 1025)).isSome)
+#guard ((layoutResult nestedEnvironment (.bytes 1054)).map Layout.leafCount == some 1054)
+#guard ((errorResult nestedEnvironment (.bytes 1055)).isSome)
 #guard ((errorResult nestedEnvironment (.scalar (.uint (ScalarPolicy.maxUint + 1)))).isSome)
 #guard isError (layout {defaultLimits with maxExpandedLeaves := 1_000_000}
   nestedEnvironment .unit)

@@ -525,7 +525,7 @@ fn canonical_byte_length(text: &str) -> Result<usize> {
         .parse::<usize>()
         .map_err(|_| anyhow!("control byte length"))?;
     ensure!(
-        length <= scalars::MAX_BYTES_LENGTH,
+        length <= scalars::MAX_BYTE_OPERATION_LENGTH,
         "control byte length exceeds the source limit"
     );
     Ok(length)
@@ -758,13 +758,13 @@ fn bytes_operation(
     }
     if let Some(encoded) = operation.strip_prefix("__byteAt:") {
         let (length, index) = match encoded.split_once(':') {
-            Some((length, index)) => (
-                canonical_byte_length(length)?,
-                canonical_byte_length(index)?,
-            ),
-            None => (32, canonical_byte_length(encoded)?),
+            Some((length, index)) => (canonical_index(length)?, canonical_index(index)?),
+            None => (32, canonical_index(encoded)?),
         };
-        ensure!(count == 1 && index < length, "control byte index");
+        ensure!(
+            count == 1 && length <= scalars::MAX_BYTES_LENGTH && index < length,
+            "control byte index"
+        );
         return Ok((
             vec![byte_scalar_type(length)],
             ScalarType::parse("UIntRange<256>")?,
@@ -861,7 +861,7 @@ fn bytes_operation(
         let right_length = canonical_byte_length(fields[1])?;
         let length = left_length
             .checked_add(right_length)
-            .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+            .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
             .ok_or_else(|| anyhow!("concatBytes result exceeds the source byte limit"))?;
         ensure!(count == 2, "concatBytes argument count");
         return Ok((
@@ -1455,7 +1455,7 @@ impl Parser<'_> {
                 let length = field(v, "length")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
                     .ok_or_else(|| anyhow!("fromBytes byte length"))?;
                 let canonical = format!("fromBytes:{token}:{length}");
                 let (parameters, result, _) = bytes_operation(&canonical, 1)?;
@@ -1484,7 +1484,7 @@ impl Parser<'_> {
                 let length = field(v, "length")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
                     .ok_or_else(|| anyhow!("foreignFromBytes byte length"))?;
                 if foreign_type.role() == crate::foreign::ForeignRole::Point {
                     ensure!(
@@ -1821,7 +1821,7 @@ impl Parser<'_> {
                 let length = field(v, "length")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
                     .ok_or_else(|| anyhow!("control byte length"))?;
                 let value = self.expr(field(v, "value")?, env, depth + 1)?;
                 ensure!(
@@ -1839,7 +1839,7 @@ impl Parser<'_> {
                 let length = field(v, "length")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
                     .ok_or_else(|| anyhow!("control byte length"))?;
                 let start = field(v, "start")?
                     .as_u64()
@@ -1870,16 +1870,16 @@ impl Parser<'_> {
                 let left_length = field(v, "leftLength")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
                     .ok_or_else(|| anyhow!("control left byte length"))?;
                 let right_length = field(v, "rightLength")?
                     .as_u64()
                     .and_then(|length| usize::try_from(length).ok())
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
                     .ok_or_else(|| anyhow!("control right byte length"))?;
                 let length = left_length
                     .checked_add(right_length)
-                    .filter(|length| *length <= scalars::MAX_BYTES_LENGTH)
+                    .filter(|length| *length <= scalars::MAX_BYTE_OPERATION_LENGTH)
                     .ok_or_else(|| anyhow!("control concatenated byte length"))?;
                 let left = self.expr(field(v, "left")?, env, depth + 1)?;
                 let right = self.expr(field(v, "right")?, env, depth + 1)?;
@@ -3593,6 +3593,10 @@ fn impact_ledger_read_inputs(read: &Json) -> Result<Vec<Json>> {
             let length = scalar
                 .bytes_length()
                 .expect("byte scalar type has a checked length");
+            ensure!(
+                length <= scalars::MAX_BYTE_OPERATION_LENGTH,
+                "native ledger byte read exceeds the storage limit"
+            );
             let expected = crate::byte_projection_bindings(&read_name, length)?;
             checked_impact_projections(read, &expected)
         }
@@ -4300,6 +4304,10 @@ fn expected_ledger_inputs(
             _ => None,
         };
         if let Some(length) = byte_length {
+            ensure!(
+                length <= scalars::MAX_BYTE_OPERATION_LENGTH,
+                "Impact byte read exceeds the storage limit"
+            );
             let projection_bindings = crate::byte_projection_bindings(text(read, "name")?, length)?;
             checked_impact_projections(read, &projection_bindings)?;
             for (expected_name, expected_type) in projection_bindings {
@@ -4350,7 +4358,13 @@ fn expected_ledger_inputs(
                 let name = name(text(component, "name")?)?;
                 let projections = match ScalarType::parse(text(component, "type")?)? {
                     ScalarType::Bytes32 => crate::byte_projection_bindings(&name, 32)?,
-                    ScalarType::Bytes(length) => crate::byte_projection_bindings(&name, length)?,
+                    ScalarType::Bytes(length) => {
+                        ensure!(
+                            length <= scalars::MAX_BYTE_OPERATION_LENGTH,
+                            "Impact component byte read exceeds the storage limit"
+                        );
+                        crate::byte_projection_bindings(&name, length)?
+                    }
                     ScalarType::JubjubPoint => expected_point_projection_bindings(&name),
                     _ => {
                         append_impact_ledger_input(
@@ -8085,6 +8099,11 @@ mod completed_invocation_tests {
         let completed = run_host_plan(host_plan("Bytes<0>", empty));
         assert_eq!(completed["status"], "completed");
         assert_eq!(completed["result"], json!({"kind":"bytes","values":[]}));
+
+        let (parameters, _, projection) = super::bytes_operation("__byteAt:1025:1024", 1).unwrap();
+        assert_eq!(parameters, vec![ScalarType::Bytes(1025)]);
+        assert!(matches!(projection, crate::Expr::ByteAt { index: 1024, .. }));
+        assert!(super::bytes_operation("__byteAt:1055:1024", 1).is_err());
     }
 
     #[test]

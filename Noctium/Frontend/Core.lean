@@ -1179,8 +1179,8 @@ private def scalarSerializeTerm (span : Syntax) (type : Ty) (value : TSyntax `te
     (length : Nat) : CommandElabM (TSyntax `term) := do
   let some width := Wire.scalarWidth type
     | throwErrorAt span "serialize requires a scalar or fixed bytes"
-  unless width ≤ length && length ≤ maxBytesLength do
-    throwErrorAt span s!"serialize requires a byte length from {width} through {maxBytesLength}"
+  unless width ≤ length && length ≤ maxByteOperationLength do
+    throwErrorAt span s!"serialize requires a byte length from {width} through {maxByteOperationLength}"
   let codec ← wireCodecTerm type
   `(Noctium.Wire.ScalarCodec.serialize $codec $value $(natTerm length) (by decide))
 
@@ -1369,8 +1369,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let (valueTy, value) ← expression env value
     let .bytes length := valueTy
       | throwErrorAt stx "fromBytes requires a Bytes expression"
-    if length > maxBytesLength then
-      throwErrorAt stx s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if length > maxByteOperationLength then
+      throwErrorAt stx s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     pure (target, ← `(Noctium.Expr.fromBytes (target := $(← tyTerm target)) $value))
   | `(nlexpr| fromBytesChecked($target:nltype, $value)) => do
     let target ← readTy target
@@ -1379,8 +1379,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
       | throwErrorAt stx "fromBytesChecked requires a Bytes expression"
     unless 0 < length do
       throwErrorAt stx "fromBytesChecked requires at least one byte"
-    if length > maxBytesLength then
-      throwErrorAt stx s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if length > maxByteOperationLength then
+      throwErrorAt stx s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     match target with
     | .native =>
       pure (.native, ← `(Noctium.Wire.checkedNativeFromBytes $value))
@@ -1654,8 +1654,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let (.bytes leftLength, .bytes rightLength) := (leftTy, rightTy)
       | throwErrorAt stx "concatBytes requires two Bytes expressions"
     let length := leftLength + rightLength
-    if length > Noctium.maxBytesLength then
-      throwErrorAt stx s!"concatenated byte string length exceeds the maximum of {Noctium.maxBytesLength}"
+    if length > Noctium.maxByteOperationLength then
+      throwErrorAt stx s!"concatenated byte string length exceeds the maximum of {Noctium.maxByteOperationLength}"
     pure (.bytes length, ← `(Noctium.Expr.concatBytes $left $right))
   | `(nlexpr| reverseBytes32($value)) => do
     let value ← expected env value (.bytes 32)
@@ -1972,8 +1972,8 @@ private partial def expression (env : Bindings) (stx : TSyntax `nlexpr) :
     let byteLength ← match valueTy with
       | .bytes byteLength => pure byteLength
       | _ => throwErrorAt stx "foreignFromBytes requires a Bytes expression"
-    if byteLength > maxBytesLength then
-      throwErrorAt stx s!"byte string length exceeds the maximum of {maxBytesLength}"
+    if byteLength > maxByteOperationLength then
+      throwErrorAt stx s!"byte string length exceeds the maximum of {maxByteOperationLength}"
     if let .point _ := kind then
       unless byteLength == kind.byteLength do
         throwErrorAt stx s!"foreign point decoding requires Bytes {kind.byteLength}"
@@ -6445,8 +6445,8 @@ private def checkMerkleLeafWidth (source : Syntax) (fields : List Ty) : CommandE
     match merkleLeafWidth ty with
     | some width => pure width
     | none => throwErrorAt source "MerkleTree leaves require Native, Bool, bounded UInt, fixed Bytes, JubjubPoint or a foreign curve value"
-  unless widths.sum + 6 ≤ Noctium.maxBytesLength do
-    throwErrorAt source s!"MerkleTree leaf exceeds the maximum preimage length of {Noctium.maxBytesLength}"
+  unless widths.sum + 6 ≤ Noctium.maxByteOperationLength do
+    throwErrorAt source s!"MerkleTree leaf exceeds the maximum preimage length of {Noctium.maxByteOperationLength}"
 
 private def readMerkleSpec (spec : TSyntax `nlmerklespec) : CommandElabM (Nat × MerkleLeafType) := do
   let (depth, leaf) ← match spec with

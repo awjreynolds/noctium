@@ -163,8 +163,8 @@ UInt cast so their little-endian encoding rejects values that do not fit.
 Widths of 32 bytes or more keep the source type and serialize with zero
 padding, matching the canonical scalar codec. -/
 def numericBytesTarget (source : Ty) (length : Nat) : Except String Ty := do
-  unless 0 < length && length ≤ maxBytesLength do
-    throw s!"toBytes requires a byte width from 1 through {maxBytesLength}"
+  unless 0 < length && length ≤ maxByteOperationLength do
+    throw s!"toBytes requires a byte width from 1 through {maxByteOperationLength}"
   match source with
   | .native =>
     if length ≤ 31 then pure (.uint (2 ^ (length * 8) - 1)) else pure .native

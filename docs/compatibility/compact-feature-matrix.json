@@ -398,7 +398,7 @@
       "layer": "language",
       "surface": "Bytes<n>",
       "noctiumStatus": "subset",
-      "notes": "Lean supports fixed byte lengths 0 through 1024, literals with right padding, typed operations and bounded FAB chunks. Readable packBytes constructs ordinary Bytes from checked octets and sequence spreads. The paired Compact 0.36.1 and native cases match the reversed payload and witness order, including the zero-width callback. The ordinary public 256-byte input produced a proved, finalized catalog call on the pinned localnet. Full conversion and overload equivalence remains open. A matched Bytes33 Map replay distinguishes keys sharing 32 bytes and preserves the full 33-byte keys through an overwrite and native pagination.",
+      "notes": "Lean admits fixed byte types through 1054 within the existing 34-chunk public ABI. Fixed vectors and bounded byte operations retain their separate resource limits. The pinned Compact and Noctium native fixtures round-trip a public Bytes1025 payload, including both tail bytes, and reject a 1024-byte input for the declared width. The native relation constrains the leading physical field to 16 bits. Lean supports literals with right padding, typed operations and bounded FAB chunks. Readable packBytes constructs ordinary Bytes from checked octets and sequence spreads. The paired Compact 0.36.1 and native cases match the reversed payload and witness order, including the zero-width callback. The ordinary public 256-byte input produced a proved, finalized catalog call on the pinned localnet. Full conversion and overload equivalence remains open. A matched Bytes33 Map replay distinguishes keys sharing 32 bytes and preserves the full 33-byte keys through an overwrite and native pagination.",
       "source": [
         "reference"
       ],
@@ -412,6 +412,9 @@
         "runtime/tests/collection_reads.rs",
         "docs/development/native-client-abi.md",
         "docs/development/fixed-bytes.md",
+        "tests/WidePublicBytes.lean",
+        "tests/compact/WidePublicBytes.compact",
+        "tests/compact/wide-public-bytes.mjs",
         "tests/ReadableRecordConstruction.lean",
         "tests/compact/readable-record-construction.mjs",
         "runtime/tests/readable_record_construction.rs",

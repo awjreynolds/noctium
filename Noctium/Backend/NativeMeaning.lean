@@ -198,7 +198,7 @@ def fabByteHashTerm (algorithm : String) (alignment : List String) (values : Lis
   if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
-        if width ≤ maxBytesLength && values.length == bytesChunkCount width then
+        if width ≤ maxByteOperationLength && values.length == bytesChunkCount width then
           return fixedByteHashTerm algorithm width values
   return .unary (algorithm ++ "_fab:" ++ String.intercalate "," alignment) (.hash values)
 
@@ -215,7 +215,7 @@ def persistentHashFabTerm (alignment : List String) (values : List Term) : Term 
   if let [descriptor] := alignment then
     if descriptor.startsWith "bytes:" then
       if let some width := (descriptor.drop 6).toNat? then
-        if width != 32 && width ≤ maxBytesLength &&
+        if width != 32 && width ≤ maxByteOperationLength &&
             values.length == bytesChunkCount width then
           return fixedByteHashTerm "persistent_hash" width values
   return .unary ("persistent_hash_fab:" ++ String.intercalate "," alignment) (.hash values)
@@ -271,7 +271,7 @@ def foreignFromBytesTerm (kind : Foreign.Kind) (length : Nat) (value : Term) : T
 /-- Canonical source term for the native decoder's Native and JubjubScalar
 targets. Keep the Bytes32 marker stable for existing source expressions. -/
 def typedScalarFromBytesTerm (target : Ty) (length : Nat) (value : Term) : Except String (Term × Nat) := do
-  unless length ≤ maxBytesLength do throw "byte string length exceeds the source bound"
+  unless length ≤ maxByteOperationLength do throw "byte string length exceeds the source bound"
   match target with
   | .native =>
     if length == 0 then pure (.constant 0, Field.modulus - 1)
