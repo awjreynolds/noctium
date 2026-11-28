@@ -19,6 +19,8 @@ use std::{
 };
 use transient_crypto::curve::Fr;
 
+const MAX_TYPED_REQUESTS: usize = 1201;
+
 fn artifact_root() -> PathBuf {
     PathBuf::from(
         std::env::var_os("NOCTIUM_FINITE_WITNESS_LOOP_DEPTH_DIR")
@@ -133,15 +135,15 @@ fn reply(request: &Json, attempt_id: &str, value: &str) -> TypedResponse {
     .unwrap()
 }
 
-fn check_metadata(control: &Json, plan: &Plan, count: usize) {
+fn check_metadata(control: &Json, plan: &Plan, count: usize, index_type: &str, provider: &str) {
     assert_eq!(control["mode"], "native");
     assert_eq!(control["kind"], "host-control");
     assert_eq!(control["witnesses"].as_array().unwrap().len(), 1);
-    assert_eq!(control["witnesses"][0]["name"], "visitValue");
+    assert_eq!(control["witnesses"][0]["name"], provider);
     assert_eq!(control["witnesses"][0]["resultType"], "Native");
     assert_eq!(
         control["witnesses"][0]["parameters"],
-        json!([{"name":"index","type":"UIntRange<256>"}])
+        json!([{"name":"index","type":index_type}])
     );
     assert!(control["inputs"].as_array().unwrap().is_empty());
 
@@ -149,7 +151,7 @@ fn check_metadata(control: &Json, plan: &Plan, count: usize) {
     let calls = binding["calls"].as_array().expect("binding calls");
     assert_eq!(calls.len(), count);
     for (ordinal, call) in calls.iter().enumerate() {
-        assert_eq!(call["name"], "visitValue");
+        assert_eq!(call["name"], provider);
         assert_eq!(call["ordinal"], ordinal.to_string());
         assert_eq!(call["resultType"], "Native");
     }
@@ -172,6 +174,9 @@ fn replay(
 ) -> Result<(Session, Vec<u32>)> {
     let mut session = session_with_budget(control, entrypoint, attempt_id, count + 1)?;
     let mut seen = Vec::with_capacity(count);
+    let index_type = control["witnesses"][0]["parameters"][0]["type"]
+        .as_str()
+        .expect("witness index type");
     loop {
         let status = session.advance()?;
         if status["status"] == "completed" {
@@ -180,11 +185,11 @@ fn replay(
         }
         assert_eq!(status["status"], "need_host", "{status}");
         let request = status["request"].clone();
-        assert_eq!(request["name"], "visitValue");
+        assert_eq!(request["name"], control["witnesses"][0]["name"]);
         assert_eq!(request["schema"], "Native");
         assert_eq!(
             request["arguments"],
-            json!([{"name":"index","type":"UIntRange<256>"}])
+            json!([{"name":"index","type":index_type}])
         );
         let expected = seen.len() as u32;
         let private = session.private_request()?;
@@ -207,16 +212,35 @@ fn replay(
 #[ignore = "requires fresh FiniteWitnessLoopDepth artifacts in NOCTIUM_FINITE_WITNESS_LOOP_DEPTH_DIR"]
 fn finite_witness_loop_depth_preserves_ordered_calls_and_native_constraints() -> Result<()> {
     let root = artifact_root();
-    for (entrypoint, count) in [("witnessLoop16", 16), ("witnessLoop32", 32)] {
+    for (entrypoint, count, index_type, provider) in [
+        ("witnessLoop16", 16, "UIntRange<256>", "visitValue"),
+        ("witnessLoop32", 32, "UIntRange<256>", "visitValue"),
+        ("witnessLoop1025", 1025, "UIntRange<65536>", "visitValue16"),
+    ] {
         let stem = format!("FiniteWitnessLoopDepth.{entrypoint}");
         let control: Json = serde_json::from_slice(&fs::read(
             root.join(format!("{stem}.witness.control.json")),
-        )?)?;
-        let plan: Plan = serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)?;
-        let circuit = IrSource::load(fs::File::open(root.join(format!("{stem}.zkir")))?)?;
-        check_metadata(&control, &plan, count);
+        )?)
+        .with_context(|| format!("parse {stem} control plan"))?;
+        let plan: Plan = serde_json::from_slice(&fs::read(root.join(format!("{stem}.impact.json")))?)
+            .with_context(|| format!("parse {stem} Impact plan"))?;
+        let circuit = IrSource::load(fs::File::open(root.join(format!("{stem}.zkir")))?)
+            .with_context(|| format!("parse {stem} ZKIR"))?;
+        check_metadata(&control, &plan, count, index_type, provider);
 
         let attempt = format!("{:064x}", count);
+        if count == 1025 {
+            assert_eq!(count + 1, 1026, "the typed session needs one spare request");
+            let _maximum_budget =
+                session_with_budget(&control, entrypoint, &attempt, MAX_TYPED_REQUESTS)?;
+            assert!(session_with_budget(
+                &control,
+                entrypoint,
+                &attempt,
+                MAX_TYPED_REQUESTS + 1
+            )
+            .is_err());
+        }
         let (mut accepted, seen) = replay(&control, entrypoint, &attempt, count, None)?;
         assert_eq!(seen, (0..count as u32).collect::<Vec<_>>());
         let completion = accepted
@@ -252,6 +276,18 @@ fn finite_witness_loop_depth_preserves_ordered_calls_and_native_constraints() ->
                 limited.resume_typed(reply(&request, &limited_attempt, "0"))?;
             }
             assert_eq!(limited.advance()?["status"], "failed");
+        } else if count == 1025 {
+            assert_eq!(execution.preimage.private_transcript.len(), 1025);
+            execution.preimage.private_transcript[1024] = Fr::from(1u64);
+            assert!(check(&execution, &circuit).is_err());
+
+            let attempt = "d".repeat(64);
+            let (mut changed, changed_seen) =
+                replay(&control, entrypoint, &attempt, count, Some(512))?;
+            assert_eq!(changed_seen, (0..513).collect::<Vec<_>>());
+            assert!(changed
+                .private_completion(&binding(&control)["nativeRelation"])
+                .is_err());
         }
     }
     Ok(())

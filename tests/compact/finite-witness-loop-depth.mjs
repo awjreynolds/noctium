@@ -26,14 +26,17 @@ try {
 
   const { Contract } = await import(pathToFileURL(join(generated, 'contract/index.js')).href);
   const wallet = '00'.repeat(32);
-  for (const [circuitId, count] of [['witnessLoop16', 16], ['witnessLoop32', 32]]) {
+  for (const [circuitId, count] of [
+    ['witnessLoop16', 16],
+    ['witnessLoop32', 32],
+    ['witnessLoop1025', 1025],
+  ]) {
     const calls = [];
-    const contract = new Contract({
-      visitValue: ({ privateState }, index) => {
-        calls.push(index);
-        return [privateState, 0n];
-      },
-    });
+    const provider = ({ privateState }, index) => {
+      calls.push(index);
+      return [privateState, 0n];
+    };
+    const contract = new Contract({ visitValue: provider, visitValue16: provider });
     const { currentContractState } = await contract.initialState(
       runtime.createConstructorContext(null, wallet));
     const context = runtime.createCircuitContext({
@@ -50,23 +53,24 @@ try {
   }
   const badCalls = [];
   const badContract = new Contract({
-    visitValue: ({ privateState }, index) => {
+    visitValue: ({ privateState }) => [privateState, 0n],
+    visitValue16: ({ privateState }, index) => {
       badCalls.push(index);
-      return [privateState, index === 19n ? 1n : 0n];
+      return [privateState, index === 512n ? 1n : 0n];
     },
   });
   const { currentContractState } = await badContract.initialState(
     runtime.createConstructorContext(null, wallet));
   const badContext = runtime.createCircuitContext({
-    circuitId: 'witnessLoop32',
+    circuitId: 'witnessLoop1025',
     contractAddress: runtime.dummyContractAddress(),
     coinPublicKeyOrZswapState: wallet,
     contractState: currentContractState.data,
     privateState: null,
   });
-  await assert.rejects(async () => badContract.circuits.witnessLoop32(badContext),
+  await assert.rejects(async () => badContract.circuits.witnessLoop1025(badContext),
     /witness value must be zero/);
-  assert.deepEqual(badCalls, Array.from({ length: 20 }, (_, index) => BigInt(index)));
+  assert.deepEqual(badCalls, Array.from({ length: 513 }, (_, index) => BigInt(index)));
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }

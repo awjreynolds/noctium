@@ -633,6 +633,166 @@ private def flatUnitWitnessCallSequence (program : Program) (index : String)
     (body : List Statement) : Bool :=
   (flatUnitWitnessCallName program index body).isSome
 
+private partial def stripTermAt : Term → Term
+  | .at _ value => stripTermAt value
+  | value => value
+
+private def flatNativeWitnessProvider (program : Program) (name : String) : Bool :=
+  match program.witnesses.find? (·.name == name) with
+  | some signature =>
+    signature.result == .scalar .native && signature.parameters.length == 1
+  | none => false
+
+private def flatIndexReference (index : String) (term : Term) : Bool :=
+  match stripTermAt term with
+  | .ref name => name == index
+  | _ => false
+
+private def flatScalarIndexType : Ty → Bool
+  | .native | .uint _ => true
+  | _ => false
+
+private def flatTypedIndexArgument (program : Program) (index name : String)
+    (argument : Term) : Bool := Id.run do
+  let some signature := program.witnesses.find? (·.name == name) | return false
+  let [parameter] := signature.parameters | return false
+  match stripTermAt argument with
+  | .ref argumentName =>
+    return argumentName == index && parameter.type == .scalar .native &&
+      parameter.sourceNominal.isNone && parameter.sourceNominalField.isNone
+  | .cast target value =>
+    return flatIndexReference index value && parameter.type == .scalar target &&
+      flatScalarIndexType target && parameter.sourceNominal.isNone &&
+      parameter.sourceNominalField.isNone
+  | .castNominalUInt target value =>
+    return flatIndexReference index value && parameter.type == .scalar (.uint target.maximum) &&
+      parameter.sourceNominal == some target.name && parameter.sourceNominalField.isNone
+  | _ => return false
+
+private def flatNativeLiteral (term : Term) : Bool :=
+  match stripTermAt term with
+  | .native _ => true
+  | .cast .native value =>
+    match stripTermAt value with
+    | .native _ | .uint _ _ => true
+    | _ => false
+  | .castNominalField _ value =>
+    match stripTermAt value with
+    | .native _ => true
+    | _ => false
+  | _ => false
+
+private def flatNativeIndexOrLiteral (index : String) (term : Term) : Bool :=
+  flatIndexReference index term || flatNativeLiteral term ||
+    match stripTermAt term with
+    | .cast .native value => flatIndexReference index value
+    | _ => false
+
+private def directReference (name : String) (term : Term) : Bool :=
+  match stripTermAt term with
+  | .ref candidate => candidate == name
+  | _ => false
+
+private partial def replaceFlatLoopIndex (index : String) (replacement : Term) : Term → Term
+  | .at span value => .at span (replaceFlatLoopIndex index replacement value)
+  | .ref name => if name == index then replacement else .ref name
+  | .cast target value => .cast target (replaceFlatLoopIndex index replacement value)
+  | .castNominalUInt target value =>
+    .castNominalUInt target (replaceFlatLoopIndex index replacement value)
+  | value => value
+
+private partial def replaceFlatAliasReference (alias : String) (replacement : Term) :
+    Term → Term
+  | .at span value => .at span (replaceFlatAliasReference alias replacement value)
+  | .ref name => if name == alias then replacement else .ref name
+  | value => value
+
+private partial def preserveFlatCallSpans (template replacement : Term) : Term :=
+  match template with
+  | .at span value => .at span (preserveFlatCallSpans value replacement)
+  | _ => replacement
+
+private partial def replaceFlatWitnessAssertion (alias index : String)
+    (witnessValue indexValue : Term) : Term → Option Term
+  | .at span condition =>
+    (replaceFlatWitnessAssertion alias index witnessValue indexValue condition).map (.at span)
+  | .eq left right =>
+    if directReference alias left && flatNativeIndexOrLiteral index right then
+      some (.eq (replaceFlatAliasReference alias witnessValue left)
+        (replaceFlatLoopIndex index indexValue right))
+    else if directReference alias right && flatNativeIndexOrLiteral index left then
+      some (.eq (replaceFlatLoopIndex index indexValue left)
+        (replaceFlatAliasReference alias witnessValue right))
+    else none
+  | _ => none
+
+private def flatFieldWitnessAssertion (program : Program) (index : String) :
+    List Statement → Option (String × String × Term × Term × Term)
+  | [.bind alias (.scalar .native) witnessValue, .assert condition] =>
+    match stripTermAt witnessValue with
+    | .witnessCall _ name [argument] =>
+      if alias != index && flatNativeWitnessProvider program name &&
+          flatTypedIndexArgument program index name argument then
+        match replaceFlatWitnessAssertion alias index (.native 0) (.native 0) condition with
+        | some _ =>
+          some (alias, name, argument, witnessValue, condition)
+        | none => none
+      else none
+    | _ => none
+  | _ => none
+
+private def flatFieldWitnessAssertionSequence (program : Program) (index : String)
+    (body : List Statement) : Bool :=
+  (flatFieldWitnessAssertion program index body).isSome
+
+private def flatGeneratedIndexArgument (program : Program) (name : String)
+    (argument : Term) : Option Nat := Id.run do
+  let some signature := program.witnesses.find? (·.name == name) | return none
+  let [parameter] := signature.parameters | return none
+  match stripTermAt argument with
+  | .native value =>
+    if parameter.type == .scalar .native && parameter.sourceNominal.isNone &&
+        parameter.sourceNominalField.isNone then return some value
+  | .cast target value =>
+    if parameter.type == .scalar target && flatScalarIndexType target &&
+        parameter.sourceNominal.isNone && parameter.sourceNominalField.isNone then
+      match stripTermAt value with
+      | .native number => return some number
+      | _ => pure ()
+  | .castNominalUInt target value =>
+    if parameter.type == .scalar (.uint target.maximum) &&
+        parameter.sourceNominal == some target.name && parameter.sourceNominalField.isNone then
+      match stripTermAt value with
+      | .native number => return some number
+      | _ => pure ()
+  | _ => pure ()
+  return none
+
+private def flatGeneratedWitnessSide (program : Program) (witness peer : Term) :
+    Option (String × String × Nat) := do
+  let .witnessCall site name [argument] := stripTermAt witness | none
+  let loopPrefix := "noctium.loop.call."
+  if !site.startsWith loopPrefix || !flatNativeWitnessProvider program name ||
+      !flatNativeLiteral peer then none
+  let suffix := (site.drop loopPrefix.length).toString
+  let ordinal ← suffix.toNat?
+  if suffix != toString ordinal || ordinal ≥ UInt64.size then none
+  let value ← flatGeneratedIndexArgument program name argument
+  some (site, name, value)
+
+private def flatGeneratedWitnessAssertionInfo (program : Program) (condition : Term) :
+    Option (String × String × Nat) :=
+  match stripTermAt condition with
+  | .eq left right =>
+    (flatGeneratedWitnessSide program left right).orElse fun _ =>
+      flatGeneratedWitnessSide program right left
+  | _ => none
+
+def isGeneratedWitnessAssertion (program : Program) (statement : Statement) : Bool :=
+  match statement with
+  | .assert condition => (flatGeneratedWitnessAssertionInfo program condition).isSome
+  | _ => false
+
 -- A range iteration expands to an unconditional lexical block whose first
 -- statement binds the literal Native index. These siblings stay sequential,
 -- so charge each statement once plus the lowerer's three control frames per
@@ -686,7 +846,8 @@ private def validateForRange (span : SourceSpan) (index : String) (start stop : 
 
 private def validateSourceLoopRange (program : Program) (span : SourceSpan) (index : String)
     (start stop : Nat) (body : List Statement) : Except Diagnostic Nat :=
-  if flatStaticAssertionSequence body || flatUnitWitnessCallSequence program index body then
+  if flatStaticAssertionSequence body || flatUnitWitnessCallSequence program index body ||
+      flatFieldWitnessAssertionSequence program index body then
     validateRangeBounds span index start stop
   else validateForRange span index start stop
 
@@ -715,6 +876,19 @@ private def flatWitnessCallPrefix (program : Program) : List Statement →
       let (calls, suffix) := flatWitnessCallPrefix program rest
       (call :: calls, suffix)
 
+private def flatWitnessAssertionPrefix (program : Program) : List Statement →
+    List Term × List Statement
+  | [] => ([], [])
+  | statement :: rest =>
+    match statement with
+    | .assert condition =>
+      match flatGeneratedWitnessAssertionInfo program condition with
+      | none => ([], statement :: rest)
+      | some _ =>
+        let (assertions, suffix) := flatWitnessAssertionPrefix program rest
+        (condition :: assertions, suffix)
+    | _ => ([], statement :: rest)
+
 private partial def flatWitnessCallDepthSavings (program : Program) : List Statement → Nat
   | [] => 0
   | statements =>
@@ -722,16 +896,20 @@ private partial def flatWitnessCallDepthSavings (program : Program) : List State
     if !run.isEmpty then
       run.length - 1 + flatWitnessCallDepthSavings program suffix
     else
-      match statements with
-      | [] => 0
-      | statement :: rest =>
-        let nested := match statement with
-          | .branch _ yes no =>
-            if expandedRangeIterationBlock statement then 0
-            else flatWitnessCallDepthSavings program yes + flatWitnessCallDepthSavings program no
-          | .forRange _ _ _ body => flatWitnessCallDepthSavings program body
-          | _ => 0
-        nested + flatWitnessCallDepthSavings program rest
+      let (assertions, suffix) := flatWitnessAssertionPrefix program statements
+      if !assertions.isEmpty then
+        assertions.length - 1 + flatWitnessCallDepthSavings program suffix
+      else
+        match statements with
+        | [] => 0
+        | statement :: rest =>
+          let nested := match statement with
+            | .branch _ yes no =>
+              if expandedRangeIterationBlock statement then 0
+              else flatWitnessCallDepthSavings program yes + flatWitnessCallDepthSavings program no
+            | .forRange _ _ _ body => flatWitnessCallDepthSavings program body
+            | _ => 0
+          nested + flatWitnessCallDepthSavings program rest
 
 def validWitnessIdentifier (name : String) : Bool :=
   !name.isEmpty && name.utf8ByteSize ≤ 128 && name.toList.all (fun c =>
@@ -1357,6 +1535,19 @@ private partial def expandRangeStatement (program : Program) (statement : Statem
       for offset in List.range (stop - start) do
         let site ← freshLoopWitnessSite
         reversed := .evaluate (.witnessCall site name [.native (start + offset)]) :: reversed
+      return reversed.reverse
+    if let some (alias, name, argument, witnessValue, condition) :=
+        flatFieldWitnessAssertion program index body then
+      let mut reversed := []
+      for offset in List.range (stop - start) do
+        let indexLiteral := .native (start + offset)
+        let site ← freshLoopWitnessSite
+        let witnessArgument := replaceFlatLoopIndex index indexLiteral argument
+        let call := preserveFlatCallSpans witnessValue
+          (.witnessCall site name [witnessArgument])
+        let some condition := replaceFlatWitnessAssertion alias index call indexLiteral condition
+          | panic! "checked flat witness assertion changed shape during expansion"
+        reversed := .assert condition :: reversed
       return reversed.reverse
     let mut reversed := []
     for offset in List.range (stop - start) do
@@ -3606,6 +3797,20 @@ mutual
         pure {lowered with constraints := []}
       else
         pure {lowered with constraints := reversedConstraints.reverse ++ lowered.constraints}
+    else if let (condition :: rest, suffix) := flatWitnessAssertionPrefix program body then do
+      let mut reversedConstraints : List (Expr .bool) := []
+      for (term, iteration) in (condition :: rest).zipIdx do
+        if iteration > 0 then spendLower declaration.span
+        let condition ← lowerTerm program declaration.id.scope env declaration.span term
+        let conditionExpr ← liftD (boolExpr declaration.span condition)
+        if (← get).ledgerMode then
+          appendLedgerConstraints declaration.span condition.constraints
+          appendLedgerEffect declaration.span (.require conditionExpr)
+        else
+          reversedConstraints := conditionExpr :: (condition.constraints.reverse ++ reversedConstraints)
+      let lowered ← lowerBodyWith program declaration env suffix continuation
+      -- Keep assertions flat so a long range does not nest the exported result.
+      pure {lowered with constraints := reversedConstraints.reverse ++ lowered.constraints}
     else match body with
     | [] => continuation env
     | .return value :: _ =>
