@@ -437,7 +437,10 @@ jobs:
             --emit ledger --emit witness --output "$artifacts/composite-either-input"
           .lake/build/bin/noctium compile tests/OrdinaryTupleInputs.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
-            --emit ledger --emit standalone --output "$artifacts/ordinary-tuple-inputs"
+            --emit ledger --output "$artifacts/ordinary-tuple-inputs"
+          .lake/build/bin/noctium compile tests/OrdinaryTupleInputs.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit standalone --output "$artifacts/ordinary-tuple-inputs/standalone"
           .lake/build/bin/noctium compile tests/MixedFabCommitments.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/mixed-fab-commitments"

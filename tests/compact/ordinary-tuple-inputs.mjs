@@ -24,6 +24,17 @@ try {
   const source = join(projectRoot, 'tests/compact/OrdinaryTupleInputs.compact');
   execFileSync(compactc, ['--skip-zk', source, generated], { encoding: 'utf8' });
 
+  const interfaceInfo = JSON.parse(readFileSync(join(generated, 'compiler/contract-info.json'), 'utf8'));
+  assert.equal(interfaceInfo['compiler-commit'], '7fa3a117c5e7efe9d2c51da04263e5f0b3509144');
+  const projection = interfaceInfo.circuits.find((circuit) => circuit.name === 'tupleProjection');
+  assert.deepEqual(projection.arguments, [{
+    name: 'pair',
+    type: {
+      'type-name': 'Tuple',
+      types: [{ 'type-name': 'Uint', maxval: 255 }, { 'type-name': 'Boolean' }],
+    },
+  }]);
+
   const runtimeLink = join(generated, 'node_modules/@midnight-ntwrk/compact-runtime');
   mkdirSync(dirname(runtimeLink), { recursive: true });
   symlinkSync(runtimeDirectory, runtimeLink, 'dir');

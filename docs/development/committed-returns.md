@@ -95,10 +95,12 @@ to commit the two typed fields in tuple order. Public tuples use the
 same layout with public visibility. Explicit disclosure governs releases
 of private fields. [Ordinary tuple fixture](../../tests/OrdinaryTupleInputs.lean)
 
-Emitted `noctium.json` describes ordered groups in standalone
-`inputViews` and entrypoint `callInputViews`. The corresponding input
-rows retain each field's type and visibility. Native execution uses the
-ordered scalar fields.
+For standalone circuits, `noctium.json` describes ordered groups in
+`inputViews`. Ledger plans provide the same metadata in
+`circuit.inputViews`, including when compiled with `--emit ledger` alone.
+The corresponding input rows retain each field's type and visibility.
+Entrypoint `callInputViews` in `noctium.json` describes explicitly committed
+arguments. Native execution uses the ordered scalar fields.
 
 Readable witness circuits also declare checked aggregate inputs with `Payload`
 and a codec named in `using`. For example, `private payment : Payload paymentWire`
