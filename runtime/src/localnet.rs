@@ -5074,6 +5074,169 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "zkir-321")]
+    #[test]
+    #[ignore = "submits one standalone Merkle root check to the funded development node"]
+    fn standalone_merkle_root_check_finalizes_without_state_change() -> anyhow::Result<()> {
+        use crate::{
+            artifacts::{self, ContractBundleSet, Role},
+            proof::WitnessContractTarget,
+            zkir::IrSource,
+        };
+        use anyhow::{Context, ensure};
+        use futures::executor::block_on;
+        use onchain_runtime::state::ContractState;
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::json;
+        use std::{env, io::Write, path::Path};
+        use transient_crypto::proofs::Zkir;
+
+        block_on(async {
+            let setting = |name: &str| env::var(name).with_context(|| format!("missing {name}"));
+            let endpoint = setting("NOCTIUM_STANDALONE_MERKLE_ROOT_NODE")?;
+            ensure!(
+                endpoint == "http://127.0.0.1:19944",
+                "standalone Merkle root qualification requires the funded loopback node"
+            );
+            let bundle_path = setting("NOCTIUM_STANDALONE_MERKLE_ROOT_BUNDLES")?;
+            let pins: BTreeMap<String, String> =
+                serde_json::from_str(&setting("NOCTIUM_STANDALONE_MERKLE_ROOT_MANIFESTS")?)?;
+            let bundles = pins
+                .iter()
+                .map(|(entry, pin)| {
+                    artifacts::verify(&Path::new(&bundle_path).join(entry), Some(pin))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            let manifest_sha256 = pins.get("checkCurrent").context("missing checkCurrent pin")?;
+            let bundle = bundles
+                .iter()
+                .find(|bundle| {
+                    bundle.authenticated_manifest_sha256() == Some(manifest_sha256.as_str())
+                })
+                .context("missing authenticated checkCurrent bundle")?;
+            let plan: crate::Plan = serde_json::from_slice(bundle.file(Role::Plan)?)?;
+            ensure!(plan.entrypoint == "checkCurrent", "expected checkCurrent plan");
+            ensure!(
+                plan.state.len() == 1
+                    && plan.state[0].name == "claims"
+                    && plan.state[0].kind.get("merkleTree").and_then(Json::as_u64) == Some(2),
+                "expected the depth-two claims Merkle tree"
+            );
+            let circuit_bytes = bundle.file(Role::Circuit)?;
+            let plan_bytes = bundle.file(Role::Plan)?;
+            let circuit_sha256 = hex::encode(sha2::Sha256::digest(circuit_bytes));
+            let plan_sha256 = hex::encode(sha2::Sha256::digest(plan_bytes));
+            let circuit = IrSource::load(circuit_bytes)?;
+
+            let cache = ProofCache::new(
+                setting("NOCTIUM_STANDALONE_MERKLE_ROOT_PARAMETER_CACHE")?.into(),
+                "https://srs.midnight.network/".parse()?,
+            )?;
+            let funded = FundedLedgerTest::connect(&endpoint, &cache).await?;
+            let parameters = cache.parameters(circuit.k()).await?;
+            let snapshot = funded.node.sync()?;
+            let ttl = snapshot
+                .block
+                .tblock
+                .to_secs()
+                .checked_add(1800)
+                .context("Merkle proof TTL overflows UInt64")?;
+            let mut rng = StdRng::from_entropy();
+            let state_config = br#"{"state":{"claims":[]}}"#;
+            let target = WitnessContractTarget::from_state_config(
+                ContractBundleSet::new(bundles)?,
+                state_config,
+                ttl,
+                &mut rng,
+            )?;
+            let operation = target.operation("checkCurrent", &parameters, ttl)?;
+            let initial = crate::create_state(
+                &plan,
+                &BTreeMap::from([("claims".into(), json!([]))]),
+            )?;
+            let (deployed, deployment) = funded.deploy(&target, "checkCurrent").await?;
+            let deployed_state: ContractState<Db> = native_decode(&deployment.contract_state)?;
+            ensure!(
+                deployed_state.data.get_ref() == initial.get_ref(),
+                "finalized deployment did not contain the exact empty Merkle tree"
+            );
+
+            let inputs = BTreeMap::from([
+                ("active".into(), json!(true)),
+                ("expectedRoot".into(), json!("0")),
+            ]);
+            let address = ContractAddress(HashOutput(
+                hex::decode(target.contract_address())?
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("invalid Merkle contract address"))?,
+            ));
+            let call_snapshot = funded.node.sync()?;
+            let execution = crate::prepare(
+                &plan,
+                &inputs,
+                &deployed_state.data,
+                &call_snapshot.state.parameters,
+                address,
+            )?;
+            let expected_returns = BTreeMap::from([("isValid".into(), json!(true))]);
+            ensure!(
+                crate::check(&execution, &circuit)? == execution.activity_schedule
+                    && execution.returns_json() == expected_returns
+                    && execution.after.state.get_ref() == deployed_state.data.get_ref(),
+                "standalone checkCurrent did not prove the empty root without changing state"
+            );
+
+            let mut current = Some(deployed);
+            let (bound, call) = funded
+                .call_with_bound(&operation, &mut current, &parameters, inputs)
+                .await?;
+            ensure!(
+                call.contract_state == deployment.contract_state
+                    && bound.expected_state() == deployment.contract_state.as_slice(),
+                "standalone checkCurrent changed finalized contract state bytes"
+            );
+
+            let receipt_record = |receipt: &FinalizedReceipt| {
+                json!({
+                    "height": receipt.height,
+                    "finalizedHeight": receipt.finalized_height,
+                    "blockHash": receipt.block_hash,
+                    "finalizedHash": receipt.finalized_hash,
+                    "transactionId": receipt.transaction_id,
+                    "stateBytes": receipt.contract_state.len(),
+                    "stateSha256": hex::encode(sha2::Sha256::digest(&receipt.contract_state)),
+                })
+            };
+            let evidence = json!({
+                "schemaVersion": 1,
+                "scope": "standalone active checkCurrent against the empty depth-two ordinary Merkle root",
+                "profile": crate::profile::NAME,
+                "genesis": funded.node.policy.genesis,
+                "contractAddress": target.contract_address(),
+                "entrypoint": "checkCurrent",
+                "bundleManifestSha256": manifest_sha256,
+                "operationManifestSha256": pins,
+                "planSha256": plan_sha256,
+                "circuitSha256": circuit_sha256,
+                "k": circuit.k(),
+                "expectedRoot": "0",
+                "isValid": true,
+                "deployment": receipt_record(&deployment),
+                "call": receipt_record(&call),
+                "stateUnchanged": deployment.contract_state == call.contract_state,
+            });
+            println!("{}", evidence);
+            if let Some(path) = env::var_os("NOCTIUM_STANDALONE_MERKLE_ROOT_EVIDENCE") {
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(path)?;
+                file.write_all(&serde_json::to_vec_pretty(&evidence)?)?;
+            }
+            Ok(())
+        })
+    }
+
     fn finalized_contract_logs(
         node: &Node,
         bound: &BoundTransaction,

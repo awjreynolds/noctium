@@ -93,7 +93,7 @@ trap 'rm -rf -- "$scratch"' EXIT
 NOCTIUM_NATIVE_TEST_ARTIFACTS="$scratch/contract" \
   cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
     --no-default-features --features zkir-321 --test ordinary_merkle \
-    ordinary_merkle_appends_match_compact_and_reset_exactly -- --ignored
+    ordinary_merkle_appends_match_compact_and_reset_exactly -- --ignored --exact
 ```
 
 On the isolated Ledger 9.1.0.1 localnet, the native client finalized deployment
@@ -114,14 +114,53 @@ unchanged. If a guard skips the comparison, `rootMatches` is false and the
 runtime skips the ledger read. Declare the release when the expected root or
 guard depends on private data.
 
-The ordinary Merkle fixture above checks the empty root, a stale root and a
-root written in the same call. The native checker rejects a changed comparison
-result.
+The depth-two fixture checks current and stale roots and inactive guards on
+empty and populated trees. It also checks a root written earlier in the same
+call. The native checker rejects a changed comparison result.
+
+Set `COMPACTC_0361` and `COMPACT_RUNTIME_0210` to the absolute paths to Compact
+0.36.1 and its Runtime 0.21.0 package. Run the reference oracle with the same
+scratch directory.
+
+```sh
+"$COMPACTC_0361" --version | grep -E '^0\.36\.1 \(7fa3a117c'
+test "$(node -p 'require(process.argv[1]).version' "$COMPACT_RUNTIME_0210/package.json")" = '0.21.0'
+"$COMPACTC_0361" --skip-zk tests/compact/OrdinaryMerkle.compact "$scratch/compact"
+mkdir -p "$scratch/node_modules/@midnight-ntwrk"
+ln -s "$COMPACT_RUNTIME_0210" "$scratch/node_modules/@midnight-ntwrk/compact-runtime"
+cp tests/compact/ordinary-merkle.mjs "$scratch/ordinary-merkle.mjs"
+node "$scratch/ordinary-merkle.mjs"
+```
 
 The native client finalized deployment at height 4 and the combined append
 and root check at height 7 on Ledger 9 localnet. Both receipts matched the
 predicted state bytes. The combined relation used k=8 and 232 rows.
 [Localnet receipt](ordinary-merkle-root-check-localnet-receipt.json)
+
+The standalone `checkCurrent` call also finalized on the funded development
+ledger. It returned true for the empty depth-two tree root and preserved
+the 7,144-byte deployed contract state exactly. The pinned ZKIR 3.2.1 tool
+reported K7 and 63 rows for this standalone relation. The transaction ID in the
+receipt commits to the proved transaction. The matched replay covers depth two.
+[Standalone receipt](standalone-ordinary-merkle-root-localnet-receipt.json)
+
+To replay the standalone check, assemble one authenticated public bundle for
+each operation exported by `NativeMerkleTree`. Use the compiled source above
+and the pinned ZKIR 3.2.1 tool, with the current development ledger parameters.
+Put the five bundles in directories named for the operations. The manifest
+pin map is a JSON object from operation names to trusted SHA-256 digests.
+[Public bundle recipe](portable-artifacts.md)
+
+```sh
+NOCTIUM_STANDALONE_MERKLE_ROOT_NODE=http://127.0.0.1:19944 \
+NOCTIUM_STANDALONE_MERKLE_ROOT_BUNDLES="$scratch/bundles" \
+NOCTIUM_STANDALONE_MERKLE_ROOT_MANIFESTS="$(cat "$scratch/pins.json")" \
+NOCTIUM_STANDALONE_MERKLE_ROOT_PARAMETER_CACHE=/private/tmp/noctium-proof-params \
+  cargo +1.100.0 test --manifest-path runtime/Cargo.toml --locked \
+  --no-default-features --features zkir-321,localnet --lib \
+  localnet::tests::standalone_merkle_root_check_finalizes_without_state_change \
+  -- --ignored --exact --nocapture
+```
 
 ## Write an ordinary Merkle tree at an index
 

@@ -130,6 +130,12 @@ fn ordinary_merkle_appends_match_compact_and_reset_exactly() {
     let unchanged = read_root(true, roots[0], &appended.after.state);
     assert_eq!(unchanged.returns_json()["isValid"], true);
     assert_eq!(unchanged.after.state, appended.after.state);
+    let stale = read_root(true, "0", &appended.after.state);
+    assert_eq!(stale.returns_json()["isValid"], false);
+    assert_eq!(stale.after.state, appended.after.state);
+    let skipped = read_root(false, roots[0], &appended.after.state);
+    assert_eq!(skipped.returns_json()["isValid"], false);
+    assert_eq!(skipped.after.state, appended.after.state);
 
     let (reset, reset_circuit) = fixture("NativeMerkleTree", "resetAndCheck");
     let reset_result = run(&reset, &reset_circuit, BTreeMap::new(), &state);
