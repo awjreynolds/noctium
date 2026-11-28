@@ -435,6 +435,12 @@ jobs:
           .lake/build/bin/noctium compile tests/CompositeEitherInput.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/composite-either-input"
+          .lake/build/bin/noctium compile tests/OrdinaryTupleInputs.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit ledger --output "$artifacts/ordinary-tuple-inputs"
+          .lake/build/bin/noctium compile tests/OrdinaryTupleInputs.lean \
+            --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
+            --emit standalone --output "$artifacts/ordinary-tuple-inputs/standalone"
           .lake/build/bin/noctium compile tests/MixedFabCommitments.lean \
             --target profiles/midnight-ledger-9-zkir-3.2.1-target.json \
             --emit ledger --emit witness --output "$artifacts/mixed-fab-commitments"
@@ -662,6 +668,7 @@ jobs:
             NOCTIUM_OPAQUE_MAYBE_DIR="$artifacts/opaque-maybe" \
             NOCTIUM_MAYBE_BYTES_CURVES_DIR="$artifacts/maybe-bytes-curves" \
             NOCTIUM_COMPOSITE_EITHER_INPUT_DIR="$artifacts/composite-either-input" \
+            NOCTIUM_ORDINARY_TUPLE_INPUTS_DIR="$artifacts/ordinary-tuple-inputs" \
             NOCTIUM_MIXED_FAB_COMMITMENTS_DIR="$artifacts/mixed-fab-commitments" \
             NOCTIUM_BOUNDED_FAB_HASH_COMMIT_DIR="$artifacts/bounded-fab-hash-commit" \
             NOCTIUM_NESTED_TRANSIENT_HASH_DIR="$artifacts/nested-transient-hash" \
@@ -710,6 +717,7 @@ jobs:
               --test readable_record_construction \
               --test scalar_transient_hash \
               --test composite_maybe_input --test composite_either_input \
+              --test ordinary_tuple_inputs \
               --test opaque_maybe \
               --test maybe_bytes_curves \
               --test qualified_shielded_coin_info_abi --test nominal_record_equality \

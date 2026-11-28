@@ -311,6 +311,7 @@ scoped syntax "Secp256r1Point" : nltype
 scoped syntax "Curve25519Base" : nltype
 scoped syntax "Curve25519Scalar" : nltype
 scoped syntax "Curve25519Point" : nltype
+scoped syntax "[" nltype,* "]" : nltype
 scoped syntax (name := noctiumEnumTypeCommand) "noctium_enum" ident "where" ident* "end" : command
 scoped syntax (name := noctiumUIntTypeCommand) "noctium_uint_type" ident ":="
   "UInt" num : command
@@ -321,6 +322,7 @@ scoped syntax num : nlexpr
 scoped syntax "true" : nlexpr
 scoped syntax "false" : nlexpr
 scoped syntax "let" ident ":=" nlexpr "in" nlexpr : nlexpr
+scoped syntax (name := ordinaryTupleProjection) "tupleAt(" ident "," num ")" : nlexpr
 scoped syntax "assertThen(" nlexpr "," nlexpr ")" : nlexpr
 scoped syntax "assertUnit(" nlexpr ")" : nlexpr
 scoped syntax "assertUnit(" nlexpr "," str ")" : nlexpr
@@ -863,6 +865,44 @@ private structure CircuitSourceType where
   nominalField : Option NominalFieldType := none
   nominalEnum : Option NominalEnumType := none
   contractRef : Option Name := none
+
+private structure CircuitTupleInput where
+  name : String
+  aliases : List String
+
+private def circuitTupleInputFields? (stx : TSyntax `nltype) :
+    Option (List (TSyntax `nltype)) := do
+  let `(nltype| [$fields:nltype,*]) := stx | none
+  pure fields.getElems.toList
+
+private partial def resolveCircuitTupleProjections
+    (tupleInputs : List CircuitTupleInput) (stx : TSyntax `nlexpr) :
+    CommandElabM (TSyntax `nlexpr) := do
+  let rec go (visible : List CircuitTupleInput) (raw : Syntax) : CommandElabM Syntax := do
+    let expression : TSyntax `nlexpr := ⟨raw⟩
+    match expression with
+    | `(nlexpr| tupleAt($name:ident, $index:num)) => do
+      let some input := visible.find? (·.name == name.getId.toString)
+        | throwErrorAt name s!"unknown Noctium tuple input '{name.getId}'"
+      let some alias := input.aliases[index.getNat]?
+        | throwErrorAt index s!"tuple index {index.getNat} is out of bounds for '{name.getId}'"
+      let identifier : TSyntax `ident := ⟨mkIdent (Name.mkSimple alias)⟩
+      return (← `(nlexpr| $identifier:ident)).raw
+    | `(nlexpr| let $name:ident := $value:nlexpr in $body:nlexpr) => do
+      let value : TSyntax `nlexpr := ⟨← go visible value.raw⟩
+      let body : TSyntax `nlexpr := ⟨← go (visible.filter (·.name != name.getId.toString)) body.raw⟩
+      return (← `(nlexpr| let $name:ident := $value in $body)).raw
+    | `(nlexpr| $name:ident) => do
+      if visible.any (·.name == name.getId.toString) then
+        throwErrorAt name s!"tuple input '{name.getId}' requires an index"
+      else
+        pure raw
+    | _ =>
+      match raw with
+      | .node info kind args =>
+        return .node info kind (← args.mapM (go visible))
+      | _ => pure raw
+  if tupleInputs.isEmpty then pure stx else return ⟨← go tupleInputs stx.raw⟩
 
 private def readCircuitSourceType (stx : TSyntax `nltype)
     (allowNominalField : _root_.Bool := _root_.Bool.false)
@@ -2675,6 +2715,7 @@ private unsafe def checkGeneratedContract (name : Name)
 @[command_elab circuitCommand] def elabCircuit : CommandElab := fun stx => do
   match stx with
   | `(noctium_circuit $name:ident where $stmts:nlcstmt* end) =>
+    let sourceNames := syntaxIdentifiers stx
     let mut env : Bindings := []
     let mut nominalEnv : CircuitNominalEnv := []
     let mut inputs : Array (TSyntax `term) := #[]
@@ -2687,6 +2728,8 @@ private unsafe def checkGeneratedContract (name : Name)
     let mut nominalFieldInputInfo := []
     let mut contractRefEnv : List (String × Name) := []
     let mut contractRefInfo : List (String × Name) := []
+    let mut tupleInputs : List CircuitTupleInput := []
+    let mut aggregateInputInfo : List CallInputView := []
     let mut outputs : Array (TSyntax `term) := #[]
     let mut outputInfo : List (String × Ty) := []
     let mut nominalUIntOutputInfo := []
@@ -2698,33 +2741,99 @@ private unsafe def checkGeneratedContract (name : Name)
       | `(nlcstmt| public $id:ident : $ty:nltype)
       | `(nlcstmt| private $id:ident : $ty:nltype) =>
         ensureFresh env id
-        let sourceType ← readCircuitSourceType ty _root_.Bool.true _root_.Bool.true
-        let t := sourceType.type
-        let tt ← tyTerm t
         let isPublic := stmt.raw[0].getAtomVal == "public"
         let visibility ← if isPublic then `(Noctium.Visibility.public) else `(Noctium.Visibility.private)
         let span ← spanTerm stmt
-        inputs := inputs.push (← `({ name := $(stringTerm id.getId.toString), ty := $tt, visibility := $visibility, span := $span : Noctium.Input }))
-        env := (id.getId.toString, t, ← `(@Noctium.Expr.ref $tt $(stringTerm id.getId.toString))) :: env
-        nominalEnv := bindCircuitNominal nominalEnv id.getId.toString sourceType.nominalUInt
-        nominalEnumEnv := bindNominalEnum nominalEnumEnv id.getId.toString sourceType.nominalEnum
-        nominalFieldEnv := (id.getId.toString, sourceType.nominalField) ::
-          nominalFieldEnv.filter (·.1 != id.getId.toString)
-        contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
-        if let some interface := sourceType.contractRef then
-          contractRefInfo := (id.getId.toString, interface) :: contractRefInfo
-        inputInfo := inputInfo ++ [(id.getId.toString, t)]
-        if let some nominalUInt := sourceType.nominalUInt then
-          nominalUIntInputInfo := nominalUIntInputInfo ++ [(id.getId.toString, nominalUInt)]
-        if let some nominalEnum := sourceType.nominalEnum then
-          nominalEnumInputInfo := nominalEnumInputInfo ++ [(id.getId.toString, nominalEnum)]
-        if let some nominalField := sourceType.nominalField then
-          nominalFieldInputInfo := nominalFieldInputInfo ++ [(id.getId.toString, nominalField)]
-        if isPublic then publicInputInfo := publicInputInfo ++ [(id.getId.toString, t)]
+        if let some fieldTypes := circuitTupleInputFields? ty then do
+          unless !fieldTypes.isEmpty do
+            throwErrorAt ty "ordinary circuit tuple inputs require at least one scalar field"
+          if inputInfo.any (fun input => input.1 == id.getId.toString) then
+            throwErrorAt id s!"duplicate Noctium input '{id.getId}'"
+          if outputInfo.any (fun item => item.1 == id.getId.toString) then
+            throwErrorAt id s!"tuple input '{id.getId}' conflicts with an earlier output"
+          let fieldSourceTypes ← fieldTypes.mapM fun fieldType => do
+            if (circuitTupleInputFields? fieldType).isSome then
+              throwErrorAt fieldType "ordinary circuit tuple inputs require scalar fields"
+            let sourceType ← readCircuitSourceType fieldType _root_.Bool.true _root_.Bool.true
+            unless sourceType.type matches .native | .bool | .uint _ do
+              throwErrorAt fieldType "ordinary circuit tuple inputs support only Native, Bool and UInt fields"
+            pure sourceType
+          let tupleType : Types.CompositeType :=
+            .tuple (fieldSourceTypes.map fun field => .scalar field.type)
+          let checkedLayout ← match Types.checkedLayout Types.defaultLimits {} tupleType with
+            | .ok checked => pure checked
+            | .error diagnostic => throwErrorAt ty diagnostic.message
+          let paths := Helpers.sourceLeafPaths checkedLayout.value id.getId.toString
+          let leafTypes := Helpers.callViewLeafTypes checkedLayout.value
+          unless paths.length == fieldSourceTypes.length && leafTypes.length == paths.length do
+            throwErrorAt ty "tuple input leaf layout does not match its scalar fields"
+          let viewFields := paths.zip leafTypes
+          aggregateInputInfo := aggregateInputInfo ++ [{name := id.getId.toString, fields := viewFields}]
+          let tupleInputIndex := tupleInputs.length
+          let mut aliases : List String := []
+          for (fieldSourceType, fieldIndex) in fieldSourceTypes.zipIdx do
+            let fieldName := paths[fieldIndex]!
+            if inputInfo.any (fun input => input.1 == fieldName) then
+              throwErrorAt ty s!"tuple input leaf '{fieldName}' duplicates an earlier circuit input"
+            let fieldTy := fieldSourceType.type
+            let fieldTyTerm ← tyTerm fieldTy
+            inputs := inputs.push (← `({ name := $(stringTerm fieldName), ty := $fieldTyTerm, visibility := $visibility, span := $span : Noctium.Input }))
+            inputInfo := inputInfo ++ [(fieldName, fieldTy)]
+            if isPublic then publicInputInfo := publicInputInfo ++ [(fieldName, fieldTy)]
+            let mut alias := s!"_noctium_tuple_{tupleInputIndex}_{fieldIndex}"
+            let mut suffix := 0
+            while sourceNames.contains alias || env.any (fun binding => binding.1 == alias) do
+              suffix := suffix + 1
+              alias := s!"_noctium_tuple_{tupleInputIndex}_{fieldIndex}_{suffix}"
+            let reference ← `(@Noctium.Expr.ref $fieldTyTerm $(stringTerm fieldName))
+            env := (alias, fieldTy, reference) :: env
+            nominalEnv := bindCircuitNominal nominalEnv alias fieldSourceType.nominalUInt
+            nominalEnumEnv := bindNominalEnum nominalEnumEnv alias fieldSourceType.nominalEnum
+            nominalFieldEnv := (alias, fieldSourceType.nominalField) ::
+              nominalFieldEnv.filter (·.1 != alias)
+            contractRefEnv := bindContractRef contractRefEnv alias fieldSourceType.contractRef
+            if let some nominalUInt := fieldSourceType.nominalUInt then
+              nominalUIntInputInfo := nominalUIntInputInfo ++ [(fieldName, nominalUInt)]
+            if let some nominalEnum := fieldSourceType.nominalEnum then
+              nominalEnumInputInfo := nominalEnumInputInfo ++ [(fieldName, nominalEnum)]
+            if let some nominalField := fieldSourceType.nominalField then
+              nominalFieldInputInfo := nominalFieldInputInfo ++ [(fieldName, nominalField)]
+            if let some interface := fieldSourceType.contractRef then
+              contractRefInfo := (fieldName, interface) :: contractRefInfo
+            aliases := alias :: aliases
+          let inputTyTerm ← tyTerm .native
+          let tuplePlaceholder ← `(@Noctium.Expr.ref $inputTyTerm $(stringTerm id.getId.toString))
+          env := (id.getId.toString, .native, tuplePlaceholder) :: env
+          tupleInputs := tupleInputs ++ [{name := id.getId.toString, aliases := aliases.reverse}]
+        else do
+          let sourceType ← readCircuitSourceType ty _root_.Bool.true _root_.Bool.true
+          let t := sourceType.type
+          let tt ← tyTerm t
+          let inputName := id.getId.toString
+          if inputInfo.any (fun input => input.1 == inputName) then
+            throwErrorAt id s!"duplicate Noctium input '{id.getId}'"
+          inputs := inputs.push (← `({ name := $(stringTerm inputName), ty := $tt, visibility := $visibility, span := $span : Noctium.Input }))
+          env := (inputName, t, ← `(@Noctium.Expr.ref $tt $(stringTerm inputName))) :: env
+          nominalEnv := bindCircuitNominal nominalEnv inputName sourceType.nominalUInt
+          nominalEnumEnv := bindNominalEnum nominalEnumEnv inputName sourceType.nominalEnum
+          nominalFieldEnv := (inputName, sourceType.nominalField) ::
+            nominalFieldEnv.filter (·.1 != inputName)
+          contractRefEnv := bindContractRef contractRefEnv inputName sourceType.contractRef
+          if let some interface := sourceType.contractRef then
+            contractRefInfo := (inputName, interface) :: contractRefInfo
+          inputInfo := inputInfo ++ [(inputName, t)]
+          if let some nominalUInt := sourceType.nominalUInt then
+            nominalUIntInputInfo := nominalUIntInputInfo ++ [(inputName, nominalUInt)]
+          if let some nominalEnum := sourceType.nominalEnum then
+            nominalEnumInputInfo := nominalEnumInputInfo ++ [(inputName, nominalEnum)]
+          if let some nominalField := sourceType.nominalField then
+            nominalFieldInputInfo := nominalFieldInputInfo ++ [(inputName, nominalField)]
+          if isPublic then publicInputInfo := publicInputInfo ++ [(inputName, t)]
       | `(nlcstmt| let $id:ident : $ty:nltype := $value:nlexpr) =>
         ensureFresh env id
         let sourceType ← readCircuitSourceType ty _root_.Bool.true _root_.Bool.true
         let t := sourceType.type
+        let value ← resolveCircuitTupleProjections tupleInputs value
         if let some nominalEnum := sourceType.nominalEnum then
           unless nominalEnumForSourceExpression nominalEnumEnv value == some nominalEnum do
             throwErrorAt value "fieldless enum values must retain their declared type identity"
@@ -2750,15 +2859,19 @@ private unsafe def checkGeneratedContract (name : Name)
           nominalFieldEnv.filter (·.1 != id.getId.toString)
         contractRefEnv := bindContractRef contractRefEnv id.getId.toString sourceType.contractRef
       | `(nlcstmt| assert $value:nlexpr) =>
+        let value ← resolveCircuitTupleProjections tupleInputs value
         constraints := constraints.push (← if hasCircuitNominalFieldReference nominalFieldEnv value.raw then
           checkedCircuitFieldExpression env nominalEnv nominalFieldEnv value {type := .bool}
           else checkedSourceValue env nominalEnv contractRefEnv value {type := .bool})
       | `(nlcstmt| output $id:ident : $ty:nltype := $value:nlexpr) =>
-        if outputInfo.any (fun p => p.1 == id.getId.toString) || inputInfo.any (fun p => p.1 == id.getId.toString) then
+        if outputInfo.any (fun p => p.1 == id.getId.toString) ||
+            inputInfo.any (fun p => p.1 == id.getId.toString) ||
+            tupleInputs.any (·.name == id.getId.toString) then
           throwErrorAt id "duplicate Noctium output '{id.getId}'"
         let sourceType ← readCircuitSourceType ty _root_.Bool.true _root_.Bool.true
         let t := sourceType.type
         let tt ← tyTerm t
+        let value ← resolveCircuitTupleProjections tupleInputs value
         if let some nominalEnum := sourceType.nominalEnum then
           unless nominalEnumForSourceExpression nominalEnumEnv value == some nominalEnum do
             throwErrorAt value "fieldless enum values must retain their declared type identity"
@@ -2794,6 +2907,7 @@ private unsafe def checkGeneratedContract (name : Name)
       nominalFieldInputs := nominalFieldInputInfo
       nominalFieldOutputs := nominalFieldOutputInfo
       contractRefBindings := contractRefInfo
+      aggregateInputs := aggregateInputInfo
     }
   | _ => throwUnsupportedSyntax
 

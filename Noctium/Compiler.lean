@@ -1158,9 +1158,16 @@ private partial def markSharedConstraintLets (shared : Array Json) : Json → Js
     | .error _ => expression
   | expression => expression
 
+private def inputViewsJson (views : List CallInputView) : Json :=
+  toJson (views.map fun view => Json.mkObj [
+    ("name", toJson view.name),
+    ("fields", toJson (view.fields.map fun (name, ty) => Json.mkObj [
+      ("name", toJson name), ("type", toJson (typeName ty))]))])
+
 private def circuitSchemaJson (name : Name) (circuit : Circuit)
-    (standaloneFile : _root_.Bool := Bool.true) : Json :=
+    (standaloneFile : _root_.Bool := Bool.true) (inputViews : List CallInputView := []) : Json :=
   let files := if standaloneFile then [("file", toJson (name.toString ++ ".zkir"))] else []
+  let views := if inputViews.isEmpty then [] else [("inputViews", inputViewsJson inputViews)]
   let outputExpressions := circuit.outputs.map fun out => nativeExpressionJson out.value
   let sharedBindings := commonSharedPrefix outputExpressions (circuit.inputs.map (·.name))
     (circuit.outputs.map (·.name))
@@ -1173,7 +1180,7 @@ private def circuitSchemaJson (name : Name) (circuit : Circuit)
     ("inputs", toJson (circuit.inputs.map fun input => Json.mkObj [
       ("name", toJson input.name), ("type", toJson (typeName input.ty)),
       ("visibility", toJson (if input.visibility == .«public» then "public" else "private"))])),
-    ("outputs", toJson outputs)] ++
+    ("outputs", toJson outputs)] ++ views ++
     (if sharedBindings.isEmpty then [] else [("sharedBindings", Json.arr sharedBindings)]) ++ [
     ("constraints", toJson (circuit.constraints.map fun constraint =>
       if sharedBindings.isEmpty then nativeExpressionJson constraint
@@ -1355,7 +1362,7 @@ also gives proof modules a kernel-visible artifact boundary. -/
 def nativePlanJson (profile : TargetProfile) (contractName : Name)
     (state : List StateDecl) (ctor : Option Constructor)
     (ep : Entrypoint) (plan : Backend.Impact.Plan)
-    (standaloneFile : _root_.Bool := Bool.true) : Json := Id.run do
+    (standaloneFile : _root_.Bool := Bool.true) (inputViews : List CallInputView := []) : Json := Id.run do
   let publicReadCount := Backend.Impact.publicInputReadCount ep.circuit.inputs
   let reads := plan.reads.zipIdx.map fun (indexedRead : Backend.Impact.Read × Nat) =>
     let item := indexedRead.1
@@ -1391,7 +1398,7 @@ def nativePlanJson (profile : TargetProfile) (contractName : Name)
   let constructorFields := match ctor with
     | none => []
     | some value => [("constructor", constructorJson value)]
-  let circuit := circuitSchemaJson ep.circuit.name.toName ep.circuit standaloneFile
+  let circuit := circuitSchemaJson ep.circuit.name.toName ep.circuit standaloneFile inputViews
   let schemaVersion : Nat := if (circuit.getObjVal? "sharedBindings").isOk then 2 else 1
   return Json.mkObj ([
     ("schemaVersion", toJson schemaVersion)] ++ targetPlanFields ++ [
@@ -1408,16 +1415,18 @@ def nativePlanJson (profile : TargetProfile) (contractName : Name)
 def nativePlanJsonChecked (profile : TargetProfile) (contractName : Name)
     (state : List StateDecl) (ctor : Option Constructor)
     (ep : Entrypoint) (plan : Backend.Impact.Plan)
-    (standaloneFile : _root_.Bool := Bool.true) : Except String Json := do
+    (standaloneFile : _root_.Bool := Bool.true)
+    (inputViews : List CallInputView := []) : Except String Json := do
   match ctor with
   | none => pure ()
   | some value => discard (constructorJsonChecked value)
-  pure (nativePlanJson profile contractName state ctor ep plan standaloneFile)
+  pure (nativePlanJson profile contractName state ctor ep plan standaloneFile inputViews)
 
 theorem nativePlanJson_operations (profile : TargetProfile) (contractName : Name)
     (state : List StateDecl) (ctor : Option Constructor)
-    (ep : Entrypoint) (plan : Backend.Impact.Plan) (standaloneFile : _root_.Bool) :
-    (nativePlanJson profile contractName state ctor ep plan standaloneFile).getObjVal?
+    (ep : Entrypoint) (plan : Backend.Impact.Plan) (standaloneFile : _root_.Bool)
+    (inputViews : List CallInputView := []) :
+    (nativePlanJson profile contractName state ctor ep plan standaloneFile inputViews).getObjVal?
       "operations" = .ok (nativeOperationsJson plan) := by
   unfold nativePlanJson
   change (Json.mkObj _).getObjVal? _ = _
@@ -1512,6 +1521,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
   let mut planDigests : Std.HashMap String String := {}
   let mut ledgerReadAssumptions : Std.HashMap String Json := {}
   let sourceEnv ← getEnv
+  let circuitInfos := circuitRegistry.getState sourceEnv
   let controls := if emit .control then
     (controlRegistry.getState sourceEnv).filter (!sourceEnv.isImportedConst ·) else #[]
   let witnesses := (witnessRegistry.getState sourceEnv).filter (!sourceEnv.isImportedConst ·.circuitName)
@@ -1638,7 +1648,11 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
           ("bindingFile", toJson (witnessPrefix ++ ".witness.json")), ("controlFile", toJson (witnessPrefix ++ ".witness.control.json")),
           ("target", toJson ("entrypoint" : String)), ("contract", toJson name.toString),
           ("entrypoint", toJson ep.name), ("nativeWitnessQualified", toJson Bool.false)])
-      let planJson ← match nativePlanJsonChecked profile name contract.state contract.constructor ep plan (emit .standalone) with
+      let info := circuitInfos.find? fun info =>
+        info.declName.toString == ep.circuit.name && info.witnessCallArguments?.isNone
+      let inputViews := (info.map CircuitInfo.aggregateInputs).getD []
+      let planJson ← match nativePlanJsonChecked profile name contract.state contract.constructor ep plan
+          (emit .standalone) inputViews with
         | .ok value => pure value
         | .error message => throwError "invalid constructor metadata: {message}"
       let file := nativePlanFile name ep
@@ -1664,6 +1678,8 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
           guardedEffectJson (ep.effectGuards[index]?.getD none) effect))]
       let callInputFields : List (String × Json) := if ep.callInputs.isEmpty then [] else [
         ("callInputs", toJson ep.callInputs)]
+      let callInputViewFields := if ep.callInputViews.isEmpty then [] else [
+        ("callInputViews", inputViewsJson ep.callInputViews)]
       let returnFields : List (String × Json) := if ep.returns.isEmpty then [] else [
         ("returns", toJson (ep.returns.map fun returned => Json.mkObj [
           ("name", toJson returned.name), ("type", toJson (typeName returned.ty)),
@@ -1675,7 +1691,8 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
         ("nativePlanSha256", toJson digest)
       let boundFields := (ledgerReadAssumptions[nativeCircuitFile name ep]?).toList.map
         fun assumption => ("ledgerReadBound", assumption)
-      pure (Json.mkObj (baseFields ++ digestFields ++ boundFields ++ callInputFields ++ returnFields ++ returnViewFields))
+      pure (Json.mkObj (baseFields ++ digestFields ++ boundFields ++ callInputFields ++
+        callInputViewFields ++ returnFields ++ returnViewFields))
     let constructorFields ← match contract.constructor with
       | none => pure []
       | some ctor => do
@@ -1698,7 +1715,10 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
       if role == .rustBinding then
         [("sha256", toJson (EntryPointHash.sha256Hex (content ++ "\n").toUTF8))]
       else [])))]
-  let circuitSchemas := if emit .standalone then circuits else #[]
+  let circuitSchemas := (if emit .standalone then circuits else #[]).map fun (name, circuit) =>
+    let info := circuitInfos.find? (fun (info : CircuitInfo) => info.declName == name)
+    let views := (info.map CircuitInfo.aggregateInputs).getD []
+    circuitSchemaJson name circuit (inputViews := views)
   let schemaVersion : Nat := if bindPlanBytes then 3 else if explicitSelection then 2 else 1
   let metadata := Json.mkObj ([
     ("schemaVersion", toJson schemaVersion), ("target", toJson profile.name),
@@ -1706,7 +1726,7 @@ private def compileArtifacts (directory : String) (profile : TargetProfile)
     ("qualification", toJson ("unqualified-relation-and-state-description" : String)),
     ("deployable", toJson Bool.false),
     ("contracts", Json.arr contractMetadata),
-    ("circuits", toJson (circuitSchemas.map fun (name, circuit) => circuitSchemaJson name circuit (emit .standalone)))] ++
+    ("circuits", toJson circuitSchemas)] ++
     controlFields ++ witnessFields ++ inventory)
   let path : System.FilePath := directory
   liftIO <| IO.FS.createDirAll path
