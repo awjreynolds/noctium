@@ -39,4 +39,5 @@ assert.equal((await invoke('appendAndCheck', leaf, {field: 0n})).result, false);
 state = inserted.context.callContext.currentQueryContext.state;
 assert.equal((await invoke('checkCurrent', true, {field: BigInt(roots[1])})).result, true);
 assert.equal((await invoke('checkCurrent', true, {field: 0n})).result, false);
+assert.equal((await invoke('checkCurrent', false, {field: BigInt(roots[1])})).result, false);
 console.log(JSON.stringify(roots));

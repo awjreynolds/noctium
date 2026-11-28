@@ -4040,7 +4040,7 @@
       "layer": "language-ledger",
       "surface": "MerkleTree.checkRoot",
       "noctiumStatus": "equivalent",
-      "notes": "Ordinary root-only checks compare a Field against the current Merkle root. The guarded read returns false when skipped. The depth-two fixture matches Compact 0.36.1 for empty and populated roots, stale roots, inactive guards and same-call append. The native checker rejects a changed Boolean result. A funded standalone checkCurrent finalized on Ledger 9.1.0.1 with true and identical contract state bytes before and after the call. The same read lowering covers the admitted ordinary tree depths 2 through 32. Nested ledger layouts and derived path functions have their own rows.",
+      "notes": "Ordinary root-only checks compare a Field against the current Merkle root. At depth two, Compact 0.36.1 and Noctium agree on current and stale roots and inactive guards for empty and populated trees, and on a root written by an earlier effect in the same call. The native checker rejects a changed Boolean result. Funded standalone evidence on Ledger 9.1.0.1 with ZKIR 3.2.1 covers the active current-root call on an empty tree. It returned true and preserved the exact contract state bytes. Depths 3 through 32 share the ordinary read lowering and remain outside the matched replay. Nested ledger layouts and derived path functions have separate rows.",
       "source": [
         "adt"
       ],
